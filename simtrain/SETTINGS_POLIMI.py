@@ -3,7 +3,7 @@ from os.path import join
 
 
 # change this line if there are enough resources to run with full userset:
-N_SUBSAMPLE_USERS = 2500
+N_SUBSAMPLE_USERS = 500
 NUMEXPR_MAX_THREADS = '16' # enter your number of cores here
 
 # general settings related to dataset (will be overwritten when a dataset is loaded)
