@@ -3,8 +3,8 @@ from os.path import join
 
 
 # change this line if there are enough resources to run with full userset:
-N_SUBSAMPLE_USERS = 5000
-NUMEXPR_MAX_THREADS = '32' # enter your number of cores here
+N_SUBSAMPLE_USERS = 2500
+NUMEXPR_MAX_THREADS = '16' # enter your number of cores here
 
 # general settings related to dataset (will be overwritten when a dataset is loaded)
 stg = {
@@ -22,7 +22,7 @@ EPS = 1e-9  # definition of infinitesimally small
 # hyperparameters, intended to fit with cross-validation
 hyp = {
     'seed': 0,  # random seed
-    'cores': 48,  # 64 # number of cores processing
+    'cores': 16,  # 64 # number of cores processing
 
     # inhomogeneous Poisson process sampling
     'max_lam': 0.25, #2.0, #9.0,  # guess of the max value of intensity function (useful for rejection sampling). if error is raised then this value needs to be increased

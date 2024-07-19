@@ -1,12 +1,12 @@
 from os.path import join
 
-base = '< BASE PATH FOR PROJECT HERE >'
+base = r'C:\Users\nicol\github\Warwick\accordion'
 
 dat = join(base, 'dat')
 
 # contentwise paths:
 
-cw_base = '< PATH FOR CONTENTWISE DATA HERE >'
+cw_base = r'C:\Users\nicol\github\Warwick\ContentWiseImpressions\data\ContentWiseImpressions\CW10M-CSV'
 
 # obtain contentwise data (https://dl.acm.org/doi/abs/10.1145/3340531.3412774) and put them under cw_base folder:
 cw_dat_paths = {'positive_impressions': join(cw_base, 'impressions-direct-link.csv.gz'),
