@@ -88,7 +88,7 @@ hyp = {
 
         'window_size': 5,  # number of events to look back on for Hawkes intensity
         'batch_size': 128, # 64,
-        'max_epoch': 100, #10, #100, #20, #10, #100
+        'max_epoch': 80, #10, #100, #20, #10, #100
         'patience': 0, #100,
         'min_delta': 1e-4, #0.001,
         'train_val_split': 1.0, 
