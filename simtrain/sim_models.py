@@ -481,7 +481,22 @@ class UserModelBinary(UserModel):
 
     def load(self, filepath: str):
         # supports prediction but not training from saved model:
+
         self._model = k.models.load_model(filepath, custom_objects={"kb": kb}, compile=False)
+        print(filepath)
+
+        return 
+        # supports prediction but not training from saved model:
+        import json
+        from tensorflow.keras.models import load_model
+
+        with open(filepath, 'rb') as f:
+            model_config = f.read()
+        if isinstance(model_config, bytes):
+            model_config = model_config.decode('utf-8')
+        model_config = json.loads(model_config)
+        self._model = load_model(filepath, custom_objects={"kb": kb}, compile=False)
+
 
 
 class NMFRec(RecModel):
@@ -1055,7 +1070,10 @@ class VisitModel(SimulatorModel):
                                                   hyp, stg)
         X_reg = X_reg_.todense() #None if (hyp['visit_loss_method']=='event_sample') else X_reg_.todense()
         metrics = ['accuracy', count_error]
-        self._model.compile(loss=self.loss(*loss_args), \
+
+        #loss_args = hyp.get('loss_args', {})
+        # 'Twidth', 'N', 'NU', 'NI', 'hyp', and 'log_file'
+        self._model.compile(loss=self.loss(X_reg,hyp["window_size"], N, NU, NI, hyp, hyp["log_history_path"]), \
                             optimizer='rmsprop', metrics=metrics)  # adagrad
 
 
