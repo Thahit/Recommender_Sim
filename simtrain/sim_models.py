@@ -483,20 +483,6 @@ class UserModelBinary(UserModel):
         # supports prediction but not training from saved model:
 
         self._model = k.models.load_model(filepath, custom_objects={"kb": kb}, compile=False)
-        print(filepath)
-
-        return 
-        # supports prediction but not training from saved model:
-        import json
-        from tensorflow.keras.models import load_model
-
-        with open(filepath, 'rb') as f:
-            model_config = f.read()
-        if isinstance(model_config, bytes):
-            model_config = model_config.decode('utf-8')
-        model_config = json.loads(model_config)
-        self._model = load_model(filepath, custom_objects={"kb": kb}, compile=False)
-
 
 
 class NMFRec(RecModel):
