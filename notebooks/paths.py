@@ -21,7 +21,13 @@ cw_stages = {'intermediate_0': join(cw_base,'processed-0.csv.gz'),
                         'test-seen': join(cw_base, 'ContentWise-test-seen-users-subitems.csv.gz'),
                         'test-unseen': join(cw_base, 'ContentWise-test-unseen-users-subitems.csv.gz'),
                         'alldat': join(cw_base, 'ContentWise-alldat-subitems.csv.gz'),
-                        'hypsubset': join(cw_base, 'ContentWise-hypsubset-subitems.csv.gz')}
+                        'hypsubset': join(cw_base, 'ContentWise-hypsubset-subitems.csv.gz')},
+            'output_new':{'train': join(cw_base, 'ContentWise-train-subitems-new.csv.gz'),
+                        'validate': join(cw_base, 'ContentWise-validate-subitems-new.csv.gz'),
+                        'test-seen': join(cw_base, 'ContentWise-test-seen-users-subitems-new.csv.gz'),
+                        'test-unseen': join(cw_base, 'ContentWise-test-unseen-users-subitems-new.csv.gz'),
+#                        'hypsubset': join(cw_base, 'ContentWise-hypsubset-subitems-new.csv.gz')
+                        }
             }
 
 # file path/stem for storing data for training NMF models used in temperature sweep experiment:
