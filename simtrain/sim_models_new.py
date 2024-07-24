@@ -12,7 +12,7 @@ class Base_Model(nn.Module):
         layers = []
         for w in model_hyp['layer_width']:
             layers.append(nn.Linear(last_w, w))
-            layers.append(nn.GELU())
+            layers.append(nn.SiLU())
             last_w = w
         layers.append(nn.Linear(last_w, ndims_out))
         self.model = nn.Sequential(*layers)
@@ -33,7 +33,9 @@ class Ode_Function(Base_Model):
         super(Ode_Function, self).__init__(state_size, state_size, model_hyp)
     
     def forward(self, time, state):
-        return self.model(state)
+        out = self.model(state)
+        #out = torch.clip(out, min= -1e-2, max=1e2)
+        return out
 
 
 class User_State_Model(nn.Module):
@@ -109,8 +111,7 @@ class Single_Interaction_Model(Base_Model):
 
         super(Single_Interaction_Model, self).__init__(state_size + recommendation_size, num_outcomes, model_hyp)
     
-    def forward(self, state, recommendation):
-
+    def forward(self, state, recommendation):        
         x = torch.cat((state, recommendation), dim=1)
         x = self.model(x)
 
@@ -126,8 +127,9 @@ class Interaction_Model(nn.Module):
 
     def forward(self, state, recommendations):
         out = []
-        for i in range(recommendations.size(1)):# iter over recommendations
-            recommendation = recommendations[:,i, :]
+        #for i in range(recommendations.size(1)):# iter over recommendations
+        for i in range(len(recommendations)):
+            recommendation = recommendations[i].view(1,1)
             curr_out = self.single_interaction_model(state, recommendation)
             out.append(curr_out)
         out = torch.stack(out, dim=1)
@@ -142,15 +144,18 @@ class Jump_Model(Base_Model):
         might depend only on summary stats of outcomes
     ...
     '''
-    def __init__(self, state_size: int, recommendation_interactions_size: int, model_hyp: Dict):
-        super(Jump_Model, self).__init__(state_size + recommendation_interactions_size, state_size, model_hyp)
+    def __init__(self, state_size: int, num_outcomes: int, model_hyp: Dict):
+        super(Jump_Model, self).__init__(state_size + num_outcomes, state_size, model_hyp)
 
         
+    def encode_outcomes(self, recommendation_outcomes):
+        return torch.sum(recommendation_outcomes, dim=0)
+    
     def forward(self, state, recommendation_outcomes):
-        # for now just use recommendations a sinput?
+        # for now just use recommendations a sinput? caant since different sizes-> need summary stats
 
-        #state = state.unsqueeze(1)
-        recommendation_outcomes = recommendation_outcomes.view(recommendation_outcomes.size(0), -1)   
+        #recommendation_outcomes = recommendation_outcomes.view(recommendation_outcomes.size(0), -1)
+        recommendation_outcomes = self.encode_outcomes(recommendation_outcomes).view(1,-1)
         x = torch.cat((state, recommendation_outcomes), dim=1)
         x = self.model(x)# no activation needed?
 
@@ -178,6 +183,7 @@ class User_simmulation_Model(nn.Module):
                                                    self.num_outcomes, hyperparameter_dict["interaction_model"]["model_hyp"])
         
         jump_model_interaction_size = self.num_outcomes * self.num_interaction_outcomes# could change if weuse summary stats
+        jump_model_interaction_size = self.num_outcomes
         self.jump_model = Jump_Model(self.state_size, jump_model_interaction_size, hyperparameter_dict["jump_model"]["model_hyp"])
 
     def forward(self, state, recommendations):
