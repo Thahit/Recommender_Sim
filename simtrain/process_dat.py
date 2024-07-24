@@ -8,22 +8,47 @@ os.environ['NUMEXPR_MAX_THREADS'] = '64'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 
-def load_dat(filepath: str) -> Tuple[pd.DataFrame, Dict]:
+def load_dat(filepath: str, new_data = False) -> Tuple[pd.DataFrame, Dict]:
     """
     Load impressions data from `filepath`, return the data set and summary settings derived from it.
     @param filepath: where to find data file
     @return: data set, summary settings
     """
-    #
     simulation = pd.read_csv(filepath)
-
-    stg = get_settings(simulation)
+    if new_data:
+        stg = get_settings_new(simulation)
+    else:
+        stg = get_settings(simulation)
 
     # crinkle of pandas is that empty string is saved as NaN to file, need to revert back to empty string:
     simulation = simulation.replace(np.nan, '', regex=True)
 
     return simulation, stg
 
+
+def get_unique_item_count(df):
+    unique_items = set()
+
+    for _, row in df.iterrows():
+        interactions = row['item_ids']
+        
+        for interaction in interactions:
+            unique_items.update(interaction)
+
+    num_unique_items = len(unique_items)
+    return num_unique_items
+
+def get_settings_new(simulation: pd.DataFrame) -> Dict:
+    # set global variables
+    # derive general settings from loaded dataset:
+    stg = {
+        'NI': get_unique_item_count(simulation),  # num items
+        'NU': simulation.user_id.nunique(),  # num users
+        'T': simulation.timestamps.max(),  # duration of simulation (in units of days)
+        'NS': 100,  # num simulations
+        'INF_TIME': SETTINGS.stg['INF_TIME']  # how is infinity time defined (unit of days)
+    }
+    return stg
 
 def get_settings(simulation: pd.DataFrame) -> Dict:
     # set global variables
