@@ -1,8 +1,9 @@
 import torch
-
+from functools import partial
 import torch.nn as nn
 from torchdiffeq import odeint
 from typing import Tuple, Dict, Callable
+import math
 
 class Base_Model(nn.Module):
     def __init__(self, ndims_in: int, ndims_out: int, model_hyp: Dict):
@@ -66,9 +67,9 @@ class User_State_Model(nn.Module):
         return end_state
 
 #______________________________________intensity_____________________________-
-class User_State_Intensity_Model(Base_Model):
+class User_State_Intensity_Model_ODE(Base_Model):
     def __init__(self, state_size: int, model_hyp: Dict):
-        super(User_State_Intensity_Model, self).__init__(state_size, 1, model_hyp)
+        super(User_State_Intensity_Model_ODE, self).__init__(state_size, 1, model_hyp)
     
     def forward(self, state):
         x = self.model(state)
@@ -76,16 +77,66 @@ class User_State_Intensity_Model(Base_Model):
         x = nn.functional.relu(x)
         return x
 
-class global_Intensity_Model(Base_Model):
+class User_State_Intensity_Model(nn.Module):
+    def __init__(self, state_size: int, model_hyp: Dict):
+        super(User_State_Intensity_Model, self).__init__()
+        self.ode = User_State_Intensity_Model_ODE(state_size, model_hyp)
+
+    def odefunc(self, t, y, state, user_state_model):
+        if t >1e-8:# otherwise there is errors
+            state = user_state_model(state, t)        
+        out = self.ode(state)
+        return out
+
+    def forward(self, time, state, state_model, h_0 = 0, interval_time=.01):
+        '''
+        evaluates the double integral in discrete points; interval_time determines the time steps.
+        assume time only contains 1 element
+        '''
+        out = 0.
+        num_intervals = int(math.ceil(time.item()/interval_time))
+        #print(num_intervals)
+        if num_intervals==0:
+            print("time: ", time)
+        for _ in range(num_intervals):
+            state = state_model(start_state=state, h=interval_time)
+            out += self.ode(state)
+        out = nn.functional.relu(out)
+        return out
+    
+    def forward_old(self, time, state, state_model, h_0 = 0):# too unstable to have a double integral
+        t = torch.tensor([h_0, time], dtype=torch.float32)  # Time points for the integration
+        initial_cond = torch.tensor([0.0]) 
+
+        odefunc_partial = partial(self.odefunc, state=state, user_state_model=state_model)
+
+        out = odeint(odefunc_partial, initial_cond, t)[1]
+        out = nn.functional.relu(out)
+        return out
+
+class global_Intensity_Model_ODE(Base_Model):
     def __init__(self, time_size: int, model_hyp: Dict):
 
-        super(global_Intensity_Model, self).__init__(time_size, 1, model_hyp)
+        super(global_Intensity_Model_ODE, self).__init__(time_size, 1, model_hyp)
     
-    def forward(self, time):
-        x = self.model(time)
+    def forward(self, time, state):
+        x = self.model(time.unsqueeze(0))
         #relu  anything non-negative
-        x = nn.functional.relu(x)
+        #x = nn.functional.relu(x)
         return x
+
+class global_Intensity_Model(nn.Module):
+    def __init__(self, time_size: int, model_hyp: Dict):
+        super(global_Intensity_Model, self).__init__()
+        self.ode_func = global_Intensity_Model_ODE(time_size, model_hyp)
+
+    def forward(self, time, h_0 = 0):
+        t = torch.tensor([h_0, time], dtype=torch.float32)  # Time points for the integration
+        initial_cond = torch.tensor([0.0]) # don't like that
+
+        out = odeint(self.ode_func, initial_cond, t)[1]
+        out = nn.functional.relu(out)
+        return out
 
 class Intensity_Model(nn.Module):
     def __init__(self, state_size: int, time_size: int, model_hyp: Dict):
@@ -96,10 +147,10 @@ class Intensity_Model(nn.Module):
         self.global_model = global_Intensity_Model(time_size, model_hyp["global_model_hyp"])
 
     
-    def forward(self, state, time):
+    def forward(self, state, time, state_model):
         #maybe sshould input state model instead of state and convert everything into an ode
         intensity = 0
-        intensity += self.user_model(state)
+        intensity += self.user_model(state=state, time=time, state_model=state_model)
 
         # time might need to be incoded
         intensity += self.global_model(time)
@@ -192,6 +243,9 @@ class User_simmulation_Model(nn.Module):
     def init_state(self, state):
         self.state = state
     
+    def eval_intensity(self, h):
+        return self.intensity_model(self.state, h, state_model=self.state_model)
+
     def evolve_state(self, h):
         ''' 
         return state after time interval h
