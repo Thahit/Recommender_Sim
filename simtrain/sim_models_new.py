@@ -68,7 +68,7 @@ class Ode_Function(Base_Model):
             torch.Tensor: Output tensor representing the derivative of the state.
         """
         out = self.model(state)
-        #out = torch.clip(out, min= -1e-2, max=1e2)
+        out = torch.clip(out, min= -1e-3, max=1e3)
         return out
 
 
@@ -79,9 +79,9 @@ class User_State_Model(nn.Module):
     Args:
         state_size (int): Size of the state vector.
         model_hyp (Dict): Dictionary containing model hyperparameters for the ODE function.
-        noise (int): Amount of noise to add to the state. Default is 0.
+        noise (int): scaling of the noise added.
     """
-    def __init__(self, state_size: int, model_hyp: Dict, noise: int = 0):
+    def __init__(self, state_size: int, model_hyp: Dict, noise):
         super(User_State_Model, self).__init__()
 
         # time as input or integrate?, for now integrate
@@ -90,8 +90,8 @@ class User_State_Model(nn.Module):
         # last layer is linear= no activation
         self.ode_func = Ode_Function(state_size, model_hyp)
 
-        assert noise >= 0
         self.noise = noise
+        assert self.noise >= 0
     
     def add_noise(self, state, h):
         """
