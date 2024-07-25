@@ -6,6 +6,14 @@ from typing import Tuple, Dict, Callable
 import math
 
 class Base_Model(nn.Module):
+    """
+    A base neural network model with customizable layer widths.
+
+    Args:
+        ndims_in (int): Number of input dimensions.
+        ndims_out (int): Number of output dimensions.
+        model
+    """
     def __init__(self, ndims_in: int, ndims_out: int, model_hyp: Dict):
         super(Base_Model, self).__init__()
 
@@ -19,6 +27,15 @@ class Base_Model(nn.Module):
         self.model = nn.Sequential(*layers)
     
     def forward(self, x):
+        """
+        Forward pass through the model.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Output tensor.
+        """
         return self.model(x)
     #    for layer in self.model:
     #        x = layer(x)
@@ -28,18 +45,42 @@ class Base_Model(nn.Module):
 #______________________________________state_____________________________-
 
 class Ode_Function(Base_Model):
-    def __init__(self, state_size: int, model_hyp: Dict):
+    """
+    A neural network model specifically for ODE functions, inheriting from Base_Model.
 
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
+    def __init__(self, state_size: int, model_hyp: Dict):
         # time as input or integrate?, for now integrate
         super(Ode_Function, self).__init__(state_size, state_size, model_hyp)
     
     def forward(self, time, state):
+        """
+        Forward pass for ODE functions.
+
+        Args:
+            time (torch.Tensor): Time tensor.
+            state (torch.Tensor): State tensor.
+
+        Returns:
+            torch.Tensor: Output tensor representing the derivative of the state.
+        """
         out = self.model(state)
         #out = torch.clip(out, min= -1e-2, max=1e2)
         return out
 
 
 class User_State_Model(nn.Module):
+    """
+    A model for simulating state evolution using ODEs, with optional noise addition.
+
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters for the ODE function.
+        noise (int): Amount of noise to add to the state. Default is 0.
+    """
     def __init__(self, state_size: int, model_hyp: Dict, noise: int = 0):
         super(User_State_Model, self).__init__()
 
@@ -53,11 +94,32 @@ class User_State_Model(nn.Module):
         self.noise = noise
     
     def add_noise(self, state, h):
+        """
+        Add noise to the state.
+
+        Args:
+            state (torch.Tensor): State tensor.
+            h (int): Time step size.
+
+        Returns:
+            torch.Tensor: Noisy state tensor.
+        """
         if self.noise > 0:
             state += self.noise * torch.randn(state.shape) * h
         return state
     
     def forward(self, start_state: torch.Tensor, h: int, h_0: int = 0):
+        """
+        Evolve the state from time h_0 to h using ODE integration.
+
+        Args:
+            start_state (torch.Tensor): Initial state tensor.
+            h (int): Time interval for evolution.
+            h_0 (int): Initial time. Default is 0.
+
+        Returns:
+            torch.Tensor: State tensor at time h.
+        """
         t = torch.tensor([h_0, h], dtype=torch.float32)  # Time points for the integration
         
         # can specify max error if desired
@@ -68,31 +130,75 @@ class User_State_Model(nn.Module):
 
 #______________________________________intensity_____________________________-
 class User_State_Intensity_Model_ODE(Base_Model):
+    """
+    A neural network model for computing the intensity function of state changes in an ODE.
+
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, state_size: int, model_hyp: Dict):
         super(User_State_Intensity_Model_ODE, self).__init__(state_size, 1, model_hyp)
     
     def forward(self, state):
+        """
+        Compute the intensity based on the state.
+
+        Args:
+            state (torch.Tensor): State tensor.
+
+        Returns:
+            torch.Tensor: Intensity tensor.
+        """
         x = self.model(state)
         #relu  anything non-negative
         x = nn.functional.relu(x)
         return x
 
 class User_State_Intensity_Model(nn.Module):
+    """
+    A model for evaluating intensity functions with ODE integration over time.
+
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, state_size: int, model_hyp: Dict):
         super(User_State_Intensity_Model, self).__init__()
         self.ode = User_State_Intensity_Model_ODE(state_size, model_hyp)
 
     def odefunc(self, t, y, state, user_state_model):
+        """
+        ODE function used for integration.
+
+        Args:
+            t (float): Current time.
+            y (torch.Tensor): State tensor.
+            state (torch.Tensor): State tensor.
+            user_state_model (Callable): Function for updating the state.
+
+        Returns:
+            torch.Tensor: Derivative of the state.
+        """
         if t >1e-8:# otherwise there is errors
             state = user_state_model(state, t)        
         out = self.ode(state)
         return out
 
-    def forward(self, time, state, state_model, h_0 = 0, interval_time=.01):
-        '''
-        evaluates the double integral in discrete points; interval_time determines the time steps.
-        assume time only contains 1 element
-        '''
+    def forward(self, time, state, state_model, h_0 = 0, interval_time=.2):
+        """
+        Evaluate the integral of the intensity function over discrete time intervals.
+
+        Args:
+            time (torch.Tensor): Time tensor. (assume only 1 element)
+            state (torch.Tensor): State tensor.
+            state_model (Callable): Function for evolving the state.
+            h_0 (int): Initial time. Default is 0.
+            interval_time (float): Time step size. Default is 0.05.
+
+        Returns:
+            torch.Tensor: Intensity tensor.
+        """
         out = 0.
         num_intervals = int(math.ceil(time.item()/interval_time))
         #print(num_intervals)
@@ -105,6 +211,18 @@ class User_State_Intensity_Model(nn.Module):
         return out
     
     def forward_old(self, time, state, state_model, h_0 = 0):# too unstable to have a double integral
+        """
+        Evaluate the integral of the intensity function using ODE integration.
+
+        Args:
+            time (torch.Tensor): Time tensor.
+            state (torch.Tensor): State tensor.
+            state_model (Callable): Function for evolving the state.
+            h_0 (int): Initial time. Default is 0.
+
+        Returns:
+            torch.Tensor: Intensity tensor.
+        """
         t = torch.tensor([h_0, time], dtype=torch.float32)  # Time points for the integration
         initial_cond = torch.tensor([0.0]) 
 
@@ -115,22 +233,56 @@ class User_State_Intensity_Model(nn.Module):
         return out
 
 class global_Intensity_Model_ODE(Base_Model):
+    """
+    A neural network model for computing the global intensity function (constant for all users) of time.
+
+    Args:
+        time_size (int): Size of the time vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, time_size: int, model_hyp: Dict):
 
         super(global_Intensity_Model_ODE, self).__init__(time_size, 1, model_hyp)
     
     def forward(self, time, state):
+        """
+        Compute the global intensity based on time.
+
+        Args:
+            time (torch.Tensor): Time tensor.
+            state (torch.Tensor): State tensor.
+
+        Returns:
+            torch.Tensor: Global intensity tensor.
+        """
         x = self.model(time.unsqueeze(0))
         #relu  anything non-negative
         #x = nn.functional.relu(x)
         return x
 
 class global_Intensity_Model(nn.Module):
+    """
+    A model for computing the global intensity function with ODE integration.
+
+    Args:
+        time_size (int): Size of the time vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, time_size: int, model_hyp: Dict):
         super(global_Intensity_Model, self).__init__()
         self.ode_func = global_Intensity_Model_ODE(time_size, model_hyp)
 
     def forward(self, time, h_0 = 0):
+        """
+        Compute the global intensity based on time using ODE integration.
+
+        Args:
+            time (torch.Tensor): Time tensor.
+            h_0 (int): Initial time. Default is 0.
+
+        Returns:
+            torch.Tensor: Global intensity tensor.
+        """
         t = torch.tensor([h_0, time], dtype=torch.float32)  # Time points for the integration
         initial_cond = torch.tensor([0.0]) # don't like that
 
@@ -139,6 +291,14 @@ class global_Intensity_Model(nn.Module):
         return out
 
 class Intensity_Model(nn.Module):
+    """
+    A combined model for computing intensity functions from user state and global time.
+
+    Args:
+        state_size (int): Size of the state vector.
+        time_size (int): Size of the time vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, state_size: int, time_size: int, model_hyp: Dict):
         super(Intensity_Model, self).__init__()
         #self.intensity_models = []
@@ -148,7 +308,17 @@ class Intensity_Model(nn.Module):
 
     
     def forward(self, state, time, state_model):
-        #maybe sshould input state model instead of state and convert everything into an ode
+        """
+        Compute the total intensity as the sum of user and global intensity models.
+
+        Args:
+            state (torch.Tensor): State tensor.
+            time (torch.Tensor): Time tensor.
+            state_model (Callable): Function for evolving the state.
+
+        Returns:
+            torch.Tensor: Total intensity tensor.
+        """
         intensity = 0
         intensity += self.user_model(state=state, time=time, state_model=state_model)
 
@@ -158,11 +328,30 @@ class Intensity_Model(nn.Module):
 
 #______________________________________interaction_____________________________-
 class Single_Interaction_Model(Base_Model):
+    """
+    A model for computing interaction outcomes based on state and recommendations.
+
+    Args:
+        state_size (int): Size of the state vector.
+        recommendation_size (int): Size of the recommendation vector.
+        num_outcomes (int): Number of outcome dimensions.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, state_size: int, recommendation_size: int, num_outcomes: int, model_hyp: Dict):
 
         super(Single_Interaction_Model, self).__init__(state_size + recommendation_size, num_outcomes, model_hyp)
     
-    def forward(self, state, recommendation):        
+    def forward(self, state, recommendation):  
+        """
+        Compute interaction outcomes based on state and a single recommendation.
+
+        Args:
+            state (torch.Tensor): State tensor.
+            recommendation (torch.Tensor): Recommendation tensor.
+
+        Returns:
+            torch.Tensor: Interaction outcomes tensor.
+        """      
         x = torch.cat((state, recommendation), dim=1)
         x = self.model(x)
 
@@ -171,12 +360,31 @@ class Single_Interaction_Model(Base_Model):
 
 
 class Interaction_Model(nn.Module):
+    """
+    A model for computing interactions for a batch of recommendations.
+
+    Args:
+        state_size (int): Size of the state vector.
+        recommendation_size (int): Size of the recommendation vector.
+        num_outcomes (int): Number of outcome dimensions.
+        interaction_model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, state_size: int, recommendation_size: int, num_outcomes: int, interaction_model_hyp: Dict):
         super(Interaction_Model, self).__init__()
 
         self.single_interaction_model = Single_Interaction_Model(state_size, recommendation_size, num_outcomes, interaction_model_hyp)
 
     def forward(self, state, recommendations):
+        """
+        Compute interaction outcomes for a batch of recommendations.
+
+        Args:
+            state (torch.Tensor): State tensor.
+            recommendations (torch.Tensor): Batch of recommendation tensors.
+
+        Returns:
+            torch.Tensor: Interaction outcomes tensor for each recommendation.
+        """
         out = []
         #for i in range(recommendations.size(1)):# iter over recommendations
         for i in range(len(recommendations)):
@@ -189,22 +397,41 @@ class Interaction_Model(nn.Module):
 
 #______________________________________jump_____________________________-
 class Jump_Model(Base_Model):
-    '''
-    might depend on recommennded items
-    might depend on outcomes
-        might depend only on summary stats of outcomes
-    ...
-    '''
+    """
+    A model for computing jump sizes based on state and recommendation outcomes.
+
+    Args:
+        state_size (int): Size of the state vector.
+        num_outcomes (int): Number of outcome dimensions.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
     def __init__(self, state_size: int, num_outcomes: int, model_hyp: Dict):
         super(Jump_Model, self).__init__(state_size + num_outcomes, state_size, model_hyp)
 
         
     def encode_outcomes(self, recommendation_outcomes):
+        """
+        Encode recommendation outcomes into a summary statistic.
+
+        Args:
+            recommendation_outcomes (torch.Tensor): Tensor of recommendation outcomes.
+
+        Returns:
+            torch.Tensor: Encoded outcomes tensor.
+        """
         return torch.sum(recommendation_outcomes, dim=0)
     
     def forward(self, state, recommendation_outcomes):
-        # for now just use recommendations a sinput? caant since different sizes-> need summary stats
+        """
+        Compute the jump size based on state and recommendation outcomes.
 
+        Args:
+            state (torch.Tensor): State tensor.
+            recommendation_outcomes (torch.Tensor): Recommendation outcomes tensor.
+
+        Returns:
+            torch.Tensor: Jump size tensor.
+        """
         #recommendation_outcomes = recommendation_outcomes.view(recommendation_outcomes.size(0), -1)
         recommendation_outcomes = self.encode_outcomes(recommendation_outcomes).view(1,-1)
         x = torch.cat((state, recommendation_outcomes), dim=1)
@@ -214,6 +441,12 @@ class Jump_Model(Base_Model):
 
 #_______________________________________combined model______________________________-
 class User_simmulation_Model(nn.Module):
+    """
+    A combined model for simulating user behavior, including state evolution, intensity evaluation, interactions, and jumps.
+
+    Args:
+        hyperparameter_dict (Dict): Dictionary containing all model hyperparameters, including 'state_size', 'time_size', 'recom_dim', 'num_recom', 'num_interaction_outcomes', and sub-model hyperparameters.
+    """
     def __init__(self, hyperparameter_dict: Dict):
         super(User_simmulation_Model, self).__init__()
         self.state_size = hyperparameter_dict["state_size"]
@@ -241,27 +474,64 @@ class User_simmulation_Model(nn.Module):
         raise NotImplementedError
     
     def init_state(self, state):
+        """
+        Initialize the state of the model.
+
+        Args:
+            state (torch.Tensor): Initial state tensor.
+        """
         self.state = state
     
     def eval_intensity(self, h):
+        """
+        Evaluate the intensity function at a given time delta.
+
+        Args:
+            h (torch.Tensor): Time delta tensor.
+
+        Returns:
+            torch.Tensor: Intensity tensor.
+        """
         return self.intensity_model(self.state, h, state_model=self.state_model)
 
     def evolve_state(self, h):
-        ''' 
-        return state after time interval h
-        Returns:
-            tensor: state
-        '''
+        """
+        Evolve the state of the model over a time interval.
+
+        Args:
+            h (torch.Tensor): Time interval.
+        """
         #h = self.encode_time(h)
         self.state = self.state_model(self.state, h)
     
     def view_recommendations(self, recommendations):
+        """
+        View the interaction outcomes based on the current state and recommendations.
+
+        Args:
+            recommendations (torch.Tensor): Batch of recommendation tensors.
+
+        Returns:
+            torch.Tensor: Interaction outcomes tensor.
+        """
         return self.interaction_model(self.state, recommendations)
 
     def jump(self, interactions):
+        """
+        Apply a jump to the state based on interactions.
+
+        Args:
+            interactions (torch.Tensor): Interaction outcomes tensor.
+        """
         self.state += self.jump_model(self.state, interactions)
     
     def get_user_state(self):
+        """
+        Get the current state of the user.
+
+        Returns:
+            torch.Tensor: Current state tensor.
+        """
         return self.state
 
 if __name__ == "__main__":
