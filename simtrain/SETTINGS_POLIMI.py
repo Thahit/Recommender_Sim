@@ -137,24 +137,30 @@ hyp = {
 rootpaths = {
     'models': 'saved_models_polimi',
     'plots': 'fig_polimi',
-    'input': 'input'
+    'input': 'input',
+    "accordion": "accordion",
+}
+
+filepaths_new = {
+    'user_model': join(rootpaths['models'],'user_model.h5'),
+    'optimized_data': join(rootpaths['models'],'data.h5'),
 }
 
 filepaths = {
     #'impressions_data': 'impr_featurized.csv',  # training data of real impressions
     'impressions_data_test': 'ContentWise-%s-subitems.csv.gz',  # training data of real impressions
-    'user_model': join(rootpaths['models'], 'user_model.h5'),
-    'user_model_ips': join(rootpaths['models'], 'user_model_ips.h5'),
-    'user_model_dropout': join(rootpaths['models'], 'user_model_dropout.h5'),
-    'user_model_test': join(rootpaths['models'], 'user_model_test-%s.h5'),
-    'user_model_binary': join(rootpaths['models'], 'user_model_binary_test%i.h5'),
-    'user_model_binary_ips': join(rootpaths['models'], 'user_model_binary_ips_test%i.h5'),
-    'rec_model': join(rootpaths['models'], 'rec_model.h5'),
-    'rec_model_t': join(rootpaths['models'], 'rec_model_t.h5'),
-    'rec_model_t_test': join(rootpaths['models'], 'rec_model_t_test-%s_cell%i_rec%i.h5'),
-    'visit_model': join(rootpaths['models'], 'visit1_%s.h5'),  # path stem indicating how to find multiple files
-    'visit_model_test0': join(rootpaths['models'], 'visit1_%s_test0.h5'),  # path stem indicating how to find multiple files
-    'visit_model_test-train': join(rootpaths['models'], 'visit1_%s_test0.h5'),  # path stem indicating how to find multiple files
+    'user_model': join(rootpaths['models'], rootpaths['accordion'],'user_model.h5'),
+    'user_model_ips': join(rootpaths['models'], rootpaths['accordion'],'user_model_ips.h5'),
+    'user_model_dropout': join(rootpaths['models'], rootpaths['accordion'], 'user_model_dropout.h5'),
+    'user_model_test': join(rootpaths['models'], rootpaths['accordion'], 'user_model_test-%s.h5'),
+    'user_model_binary': join(rootpaths['models'], rootpaths['accordion'], 'user_model_binary_test%i.h5'),
+    'user_model_binary_ips': join(rootpaths['models'], rootpaths['accordion'], 'user_model_binary_ips_test%i.h5'),
+    'rec_model': join(rootpaths['models'], rootpaths['accordion'], 'rec_model.h5'),
+    'rec_model_t': join(rootpaths['models'], rootpaths['accordion'], 'rec_model_t.h5'),
+    'rec_model_t_test': join(rootpaths['models'], rootpaths['accordion'], 'rec_model_t_test-%s_cell%i_rec%i.h5'),
+    'visit_model': join(rootpaths['models'], rootpaths['accordion'], 'visit1_%s.h5'),  # path stem indicating how to find multiple files
+    'visit_model_test0': join(rootpaths['models'], rootpaths['accordion'], 'visit1_%s_test0.h5'),  # path stem indicating how to find multiple files
+    'visit_model_test-train': join(rootpaths['models'], rootpaths['accordion'], 'visit1_%s_test0.h5'),  # path stem indicating how to find multiple files
 }
 
 simulation_components = {
