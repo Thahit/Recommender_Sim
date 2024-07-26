@@ -139,11 +139,12 @@ rootpaths = {
     'plots': 'fig_polimi',
     'input': 'input',
     "accordion": "accordion",
+    "new": "new",
 }
 
 filepaths_new = {
-    'user_model': join(rootpaths['models'],'user_model.h5'),
-    'optimized_data': join(rootpaths['models'],'data.h5'),
+    'user_model': join(rootpaths['models'], rootpaths['new'], 'user_model.h5'),
+    'optimized_data': join(rootpaths['models'], rootpaths['new'], 'data.h5'),
 }
 
 filepaths = {
