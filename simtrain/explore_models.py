@@ -6,8 +6,115 @@ from sklearn import metrics
 import pandas as pd
 from typing import Callable, List, Tuple, Dict
 from os.path import join
+import torch
+from torch.utils.data import Dataset
+
 
 DAYS_PER_HOUR = 1 / 24.
+
+def plot_rnd_user_visits_new(state_size: int, max_time: int, dataset: Dataset, User_model,
+                        use_true_recommendations: bool =True, num_classes:int = 2,
+                        teacher_forcing: bool =True, user_idx: int=None) \
+        -> Tuple[np.ndarray, np.ndarray]:
+    """
+        Plot the visits and Poisson process intensities (and print summary statistics) for a random member.
+    """
+    from . import sim_models
+    plt.figure(figsize=(9,4)) # golden ratio
+    # pick a random streaming user to plot:
+    if user_idx is None:
+        user_params = torch.randn((1,state_size)) # create random user
+    else:
+        user_params = dataset.data[user_idx]["user_means"]
+        user_params = torch.as_tensor(user_params).view(1,-1)
+        visit_times = dataset.data[user_idx]["timestamps"]
+        recommendations_list = dataset.data[user_idx]["item_ids"]
+        reactions_list = dataset.data[user_idx]["interaction_types"]
+        plt.scatter(visit_times, np.zeros_like(visit_times), marker='x', label='visit', color='gray')
+
+        replay_of_recommendations_id = 0
+        N = len(visit_times)
+        #change
+        #print('total imp for user', simulation_u.shape[0])
+        print('total visits for user', N)
+        #print('total streams for user', user_rewards.sum())
+        #print('ave streams per day for user', user_rewards.sum() / (max_time))
+        #print('ave imp per day for user', len(user_rewards) / (max_time))
+        #print('ave imp per visit for user', simulation_u.groupby('time').time.count().mean())
+
+
+    ts = np.arange(0, max_time, DAYS_PER_HOUR / 2)  # plot increments of half hour
+
+    outputs = [[0, 0, 0]]
+    User_model.init_state(user_params)
+    with torch.no_grad():
+        for time_id in range(1,len(ts)):
+            time_delta = ts[time_id] - ts[time_id-1]#pointless calc since its evenly spaced but maybe It ll change
+            User_model.evolve_state(time_delta)
+            overall_intensity, user_intensity, global_intensity = User_model.eval_intensity(time_delta, return_all = True)
+            outputs.append([overall_intensity.item(), user_intensity.item(),
+                            global_intensity.item()])
+            
+            #need some recommendations
+            if user_idx is None:
+                # need some recommendation system???
+                raise NotImplementedError
+            else:
+                #replay the recommendations?
+                if use_true_recommendations:
+                    if replay_of_recommendations_id < N:
+                        recommendations = []
+                        reactions = []
+                        while visit_times[replay_of_recommendations_id] < ts[time_id]:
+                            reactions.extend(reactions_list[replay_of_recommendations_id])
+                            recommendations.extend(recommendations_list[replay_of_recommendations_id])
+                            replay_of_recommendations_id += 1
+                            if replay_of_recommendations_id >=N:
+                                break
+                        if not len(recommendations):
+                            continue
+                        print("overall_intensity: ", overall_intensity,
+                               "\tuser_intensity: ", user_intensity, 
+                               "\tglobal_intensity: ", global_intensity)
+                        # interact with them
+                        if teacher_forcing:
+
+                            y_pred=torch.as_tensor(reactions)
+                            y_pred = torch.nn.functional.one_hot(y_pred, num_classes=num_classes).float()
+
+                        else:
+                            recommendations = torch.as_tensor(recommendations)
+                            y_pred = User_model.view_recommendations(recommendations)
+                        User_model.jump(y_pred)
+                else:
+                    raise NotImplementedError
+
+    outputs = np.array(outputs)
+
+    plt.plot(ts, outputs[:,0], label="overall_intensity", ls="-")
+    plt.plot(ts, outputs[:,1], label="user_intensity", ls="-")
+    plt.plot(ts, outputs[:,2], label="global_intensity", ls="-")
+    plt.xlabel('time (days)')
+    plt.ylabel('intensity')
+    plt.legend()
+    #_______________old-------------------------------
+
+    """
+    # fix order of legend:
+    handles, labels = plt.gca().get_legend_handles_labels()
+    # sort both labels and handles by labels
+    legend_ord = [4, 5, 3, 0, 1, 2]
+    labels = [labels[i] for i in legend_ord]
+    handles = [handles[i] for i in legend_ord]
+    plt.gca().legend(handles=handles, labels=labels, loc='center left', bbox_to_anchor=(1, 0.5))
+    plt.tight_layout()
+    
+    if base_path is not None:
+        fig_path = join(base_path, SETTINGS.rootpaths['plots'], 'example_intensity.pdf')
+        plt.savefig(fig_path, dpi=300)
+        print('saved fig to',fig_path)
+    return Xexplore, ts
+    """
 
 
 
