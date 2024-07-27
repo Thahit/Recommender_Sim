@@ -5,6 +5,8 @@ from torchdiffeq import odeint
 from typing import Tuple, Dict, Callable
 import math
 
+ODE_GRADIENT_CLIP = 1e4
+
 class Base_Model(nn.Module):
     """
     A base neural network model with customizable layer widths.
@@ -68,7 +70,36 @@ class Ode_Function(Base_Model):
             torch.Tensor: Output tensor representing the derivative of the state.
         """
         out = self.model(state)
-        out = torch.clip(out, min= -1e-3, max=1e3)
+        out = torch.clip(out, min= -ODE_GRADIENT_CLIP, max=ODE_GRADIENT_CLIP)
+        return out
+class Ode_Function_Conditioned(Base_Model):
+    """
+    A neural network model specifically for ODE functions, inheriting from Base_Model.
+
+    Args:
+        state_size (int): Size of the state vector.
+        user_params_size (int): Size of the user parameter vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
+    def __init__(self, state_size: int, user_params_size: int, model_hyp: Dict):
+        # time as input or integrate?, for now integrate
+        super(Ode_Function, self).__init__(state_size + user_params_size, state_size, model_hyp)
+    
+    def forward(self, time, state, user_params):
+        """
+        Forward pass for ODE functions.
+
+        Args:
+            time (torch.Tensor): Time tensor.
+            state (torch.Tensor): State tensor.
+            user_params (torch.Tensor): User Parameter tensor.
+
+        Returns:
+            torch.Tensor: Output tensor representing the derivative of the state.
+        """
+        out = torch.cat(state, user_params, dim=1)
+        out = self.model(out)
+        out = torch.clip(out, min= -ODE_GRADIENT_CLIP, max=ODE_GRADIENT_CLIP)
         return out
 
 
@@ -128,6 +159,104 @@ class User_State_Model(nn.Module):
 
         return end_state
 
+
+class Conditioned_User_State_Model(nn.Module):
+    """
+    A model for simulating state evolution using ODEs, with optional noise addition.
+
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters for the ODE function.
+        noise (int): scaling of the noise added.
+    """
+    def __init__(self, state_size: int, user_params_size: int, model_hyp: Dict, noise):
+        super(Conditioned_User_State_Model, self).__init__()
+
+        # not sure if user params are drawn or if we use the means/variance, I take the drawn ones for now
+        self.ode_func = Ode_Function_Conditioned(state_size, user_params_size, model_hyp)
+
+        self.noise = noise
+        assert self.noise >= 0
+    
+    def add_noise(self, state, h):
+        """
+        Add noise to the state.
+
+        Args:
+            state (torch.Tensor): State tensor.
+            h (int): Time step size.
+
+        Returns:
+            torch.Tensor: Noisy state tensor.
+        """
+        if self.noise > 0:
+            state += self.noise * torch.randn(state.shape) * h
+        return state
+    
+    def forward(self, start_state: torch.Tensor, user_params: torch.Tensor, h: int, h_0: int = 0):
+        """
+        Evolve the state from time h_0 to h using ODE integration.
+
+        Args:
+            start_state (torch.Tensor): Initial state tensor.
+            h (int): Time interval for evolution.
+            h_0 (int): Initial time. Default is 0.
+
+        Returns:
+            torch.Tensor: State tensor at time h.
+        """
+        t = torch.tensor([h_0, h], dtype=torch.float32)  # Time points for the integration
+        
+        odefunc_partial = partial(self.ode_func, user_params=user_params)
+
+        h_t = odeint(odefunc_partial, start_state, t)  # h_t contains the states at t=0 and t=h
+        end_state = h_t[1]
+
+        return end_state
+
+class User_State_Model_ensemble(nn.Module):
+    """
+    A model for simulating state evolution using ODEs, with optional noise addition.
+    Is an ensemble of User_state_models
+
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters for the ODE function.
+        noise (int): scaling of the noise added.
+        num_models (int): size of ensemble.
+    """
+    def __init__(self, state_size: int, model_hyp: Dict, noise, num_models: int = 10, return_var = False):
+        super(User_State_Model_ensemble, self).__init__()
+        # for now not very bayesian but a skeleton
+
+        # last layer is linear= no activation
+        self.ensemble = []
+        self.return_var = return_var
+        for _ in range(num_models):
+            self.ensemble.append(User_State_Model(state_size=state_size, model_hyp=model_hyp, noise=noise))
+    
+    def forward(self, start_state: torch.Tensor, h: int, h_0: int = 0):
+        """
+        Evolve the state from time h_0 to h using ensemble_members
+
+        Args:
+            start_state (torch.Tensor): Initial state tensor.
+            h (int): Time interval for evolution.
+            h_0 (int): Initial time. Default is 0.
+
+        Returns:
+            torch.Tensor: State tensor at time h.
+        """
+        outputs = []
+        for member in self.ensemble:
+            outputs.append(member(start_state, h))
+
+        outputs = torch.stack(outputs)
+        mean = outputs.mean(dim=0)
+        if not self.return_var:
+            return mean
+        uncertainty = outputs.var(dim=0)
+        return mean, uncertainty
 #______________________________________intensity_____________________________-
 class User_State_Intensity_Model_ODE(Base_Model):
     """
@@ -207,7 +336,10 @@ class User_State_Intensity_Model(nn.Module):
         for _ in range(num_intervals):
             state = state_model(start_state=state, h=interval_time)
             out += self.ode(state)
-        out = nn.functional.relu(out)
+        
+        #needs to be >= 0   maybe also <=1?
+        #out = nn.functional.relu(out)
+        out = nn.functional.sigmoid(out)
         return out
     
     def forward_old(self, time, state, state_model, h_0 = 0):# too unstable to have a double integral
@@ -320,11 +452,12 @@ class Intensity_Model(nn.Module):
             torch.Tensor: Total intensity tensor.
         """
         intensity = 0
-        intensity += self.user_model(state=state, time=time, state_model=state_model)
-
+        user_intensity = self.user_model(state=state, time=time, state_model=state_model)
+        intensity += user_intensity
         # time might need to be incoded
-        intensity += self.global_model(time)
-        return intensity
+        global_intensity = self.global_model(time)
+        intensity += global_intensity
+        return intensity, user_intensity, global_intensity
 
 #______________________________________interaction_____________________________-
 class Single_Interaction_Model(Base_Model):
@@ -452,7 +585,7 @@ class User_simmulation_Model(nn.Module):
         self.state_size = hyperparameter_dict["state_size"]
         self.time_size = 1# might change if we encode time
         self.recommendation_size = hyperparameter_dict["recom_dim"]
-        self.num_outcomes = hyperparameter_dict["num_recom"]# different reactions to outcomes
+        #self.num_recom = hyperparameter_dict["num_recom"]# different reactions to outcomes
         self.num_interaction_outcomes = hyperparameter_dict["num_interaction_outcomes"]
         #init all sub-modules
 
@@ -464,10 +597,10 @@ class User_simmulation_Model(nn.Module):
                                                model_hyp=hyperparameter_dict["intensity_model"]["model_hyp"])
 
         self.interaction_model = Interaction_Model(self.state_size, self.recommendation_size,
-                                                   self.num_outcomes, hyperparameter_dict["interaction_model"]["model_hyp"])
+                                                   self.num_interaction_outcomes, hyperparameter_dict["interaction_model"]["model_hyp"])
         
-        jump_model_interaction_size = self.num_outcomes * self.num_interaction_outcomes# could change if weuse summary stats
-        jump_model_interaction_size = self.num_outcomes
+        jump_model_interaction_size = self.num_interaction_outcomes * self.num_interaction_outcomes# could change if weuse summary stats
+        jump_model_interaction_size = self.num_interaction_outcomes
         self.jump_model = Jump_Model(self.state_size, jump_model_interaction_size, hyperparameter_dict["jump_model"]["model_hyp"])
 
     def forward(self, state, recommendations):
@@ -482,7 +615,7 @@ class User_simmulation_Model(nn.Module):
         """
         self.state = state
     
-    def eval_intensity(self, h):
+    def eval_intensity(self, h, return_all: bool = False):
         """
         Evaluate the intensity function at a given time delta.
 
@@ -492,7 +625,10 @@ class User_simmulation_Model(nn.Module):
         Returns:
             torch.Tensor: Intensity tensor.
         """
-        return self.intensity_model(self.state, h, state_model=self.state_model)
+        overall_intensity, user_intensity, local_intensity = self.intensity_model(self.state, h, state_model=self.state_model)
+        if return_all:
+            return overall_intensity, user_intensity, local_intensity 
+        return overall_intensity
 
     def evolve_state(self, h):
         """
@@ -533,6 +669,43 @@ class User_simmulation_Model(nn.Module):
             torch.Tensor: Current state tensor.
         """
         return self.state
+
+class Conditioned_User_simmulation_Model(User_simmulation_Model):
+    """
+    A combined model for simulating user behavior, including state evolution, intensity evaluation, interactions, and jumps.
+
+    Args:
+        hyperparameter_dict (Dict): Dictionary containing all model hyperparameters, including 'state_size', 'time_size', 'recom_dim', 'num_recom', 'num_interaction_outcomes', and sub-model hyperparameters.
+    """
+    def __init__(self, hyperparameter_dict: Dict):
+        super(Conditioned_User_simmulation_Model, self).__init__()
+
+        self.state_model = Conditioned_User_simmulation_Model(self.state_size, hyperparameter_dict["user_params_size"],
+                                            hyperparameter_dict["state_model"]["model_hyp"],
+                                            noise=hyperparameter_dict["state_model"].get("noise", 0))
+
+    
+    def init_state(self, state, user_params):
+        """
+        Initialize the state of the model.
+
+        Args:
+            state (torch.Tensor): Initial state tensor.
+        """
+        self.state = state
+        self.user_params = user_params
+    
+
+    def evolve_state(self, h):
+        """
+        Evolve the state of the model over a time interval.
+
+        Args:
+            h (torch.Tensor): Time interval.
+        """
+        #h = self.encode_time(h)
+        self.state = self.state_model(start_state=self.state, user_params=self.user_params,
+                                      h=h)
 
 if __name__ == "__main__":
     # test code
