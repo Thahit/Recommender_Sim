@@ -75,7 +75,8 @@ def plot_rnd_user_visits_new(state_size: int, max_time: int, dataset: Dataset, U
                             continue
                         print("overall_intensity: ", overall_intensity,
                                "\tuser_intensity: ", user_intensity, 
-                               "\tglobal_intensity: ", global_intensity)
+                               "\tglobal_intensity: ", global_intensity, 
+                               "\t before a recommendation.")
                         # interact with them
                         if teacher_forcing:
 
