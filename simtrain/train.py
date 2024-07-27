@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-def train_1_path(model, user_state, timestamps, items, labels, loss_func, num_classes, max_time, device, teacher_forcing=True):
+def train_1_path(model, user_state, timestamps, items, labels, loss_func, num_classes, 
+                 intensity_loss_func, max_time, device, teacher_forcing=True):
     ''' expects batchsize of 1
     '''
     model.init_state(user_state)
@@ -39,12 +40,13 @@ def train_1_path(model, user_state, timestamps, items, labels, loss_func, num_cl
         #print("true: ",y_true.shape, "\t predicted: ",y_pred.shape)
         #print(torch.unique(y_true))
         loss_base += loss_func(y_pred, y_true) # NLLL
-        loss_intensity += -torch.log(intensity) + max_div_by_N*intensity
+        
+        loss_intensity += intensity_loss_func(intensity, max_div_by_N)
     
     return loss_base, loss_intensity
 
 def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func_kl, optimizer, num_classes, 
-            logger, max_time,lr_scheduler, warmup_scheduler,
+            intensity_loss_func, logger, max_time,lr_scheduler, warmup_scheduler,
             kl_weight = 1, user_lr = None, log_step_size = 1, warmup_period=100):
     model.to(device)
     for epoch in tqdm(range(num_epochs)):  # Example: Number of epochs
@@ -69,8 +71,10 @@ def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func
             user_state = means + variances*torch.randn((1, state_size))
             #delta_from_previous = torch.cat([torch.zeros((timestamps.size(0),1)), timestamps[:,1:] - timestamps[:,:-1]], dim=1)
             
-            curr_loss_base, curr_loss_intensity = train_1_path(model=model, user_state=user_state, timestamps=timestamps, items=item_recom, labels=labels,  
-                         loss_func=loss_func, max_time=max_time, num_classes=num_classes, device=device)
+            curr_loss_base, curr_loss_intensity = train_1_path(model=model, user_state=user_state, 
+                            timestamps=timestamps, items=item_recom, labels=labels,  
+                         loss_func=loss_func, max_time=max_time, num_classes=num_classes, 
+                         device=device, intensity_loss_func=intensity_loss_func)
             curr_loss_kl = kl_weight * torch.sum(loss_func_kl(means, variances))#.view(1,-1)
             
             curr_loss_all = curr_loss_kl + curr_loss_base+curr_loss_intensity
@@ -91,8 +95,8 @@ def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func
                     means -= user_lr * means.grad
                     logvar -= user_lr * logvar.grad  
                 #print(means)
-                means.zero_grad()
-                logvar.zero_grad()
+                means.grad.zero_()
+                logvar.grad.zero_()
                 dataloader.dataset.Update_user_params(means.detach(), logvar.detach(), idx)
             
             #print("lr: ",optimizer.param_groups[0]['lr'])
