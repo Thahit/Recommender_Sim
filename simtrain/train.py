@@ -93,7 +93,7 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
             loss_intensity += positive_examples_weight * intensity_loss_func(intensity)
 
         else:# negative example
-            loss_intensity -= intensity_loss_func(intensity)# punish
+            loss_intensity += intensity_loss_func(1-intensity)# punish
     return loss_base, loss_intensity
 
 
