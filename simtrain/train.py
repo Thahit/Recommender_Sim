@@ -3,7 +3,7 @@ import torch.nn as nn
 from tqdm import tqdm
 
 def train_1_path(model, user_state, timestamps, items, labels, loss_func, num_classes, 
-                 intensity_loss_func, max_time, device, teacher_forcing=True):
+                 intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True):
     ''' expects batchsize of 1
     '''
     model.init_state(user_state)
@@ -15,7 +15,7 @@ def train_1_path(model, user_state, timestamps, items, labels, loss_func, num_cl
     for interaction_id in range(N):#[0]
         h = (timestamps[interaction_id] - curr_time).float()
         
-        intensity = model.eval_intensity(h)#loss on that
+        intensity = model.eval_intensity(h)+epsilon#pesilon for stability
         
         #try:
         model.evolve_state(h)
