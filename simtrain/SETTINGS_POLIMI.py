@@ -7,7 +7,7 @@ N_SUBSAMPLE_USERS = 500
 NUMEXPR_MAX_THREADS = '12' # enter your number of cores here
 
 # modelling hyper-parameters
-STATE_SIZE = 8 
+STATE_SIZE = 3
 
 # general settings related to dataset (will be overwritten when a dataset is loaded)
 stg = {

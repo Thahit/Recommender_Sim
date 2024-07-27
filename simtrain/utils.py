@@ -8,11 +8,70 @@ import numpy as np
 import pandas as pd
 from scipy import sparse
 from scipy.sparse import coo_matrix
-
+import torch
+import torch.nn as nn
 from typing import Callable, List, Tuple, Dict
 
 os.environ['NUMEXPR_MAX_THREADS'] = '16'
 
+#loss_func = nn.functional.mse_loss
+loss_func = nn.NLLLoss()
+
+def kl_divergence(mu1, sigma1, mu2, sigma2):
+    """
+    Compute the KL divergence between two normal distributions N(mu1, sigma1^2) and N(mu2, sigma2^2).
+
+    Args:
+        mu1 (Tensor): Mean of the first distribution.
+        sigma1 (Tensor): Standard deviation of the first distribution.
+        mu2 (Tensor): Mean of the second distribution.
+        sigma2 (Tensor): Standard deviation of the second distribution.
+
+    Returns:
+        Tensor: KL divergence.
+    """
+    kl_div = torch.log(sigma2 / sigma1) + ((sigma1 ** 2 + (mu1 - mu2) ** 2) / (2 * sigma2 ** 2)) - 0.5
+    return kl_div
+
+def kl_divergence_to_standard_normal(mu, sigma):
+    """
+    Compute the KL divergence from a normal distribution N(mu, sigma^2) to the standard normal distribution N(0, 1).
+
+    Args:
+        mu (Tensor): Mean of the normal distribution.
+        sigma (Tensor): Standard deviation of the normal distribution.
+
+    Returns:
+        Tensor: KL divergence.
+    """
+    sigma2 = sigma ** 2
+    kl_div = 0.5 * (sigma2 + mu ** 2 - torch.log(sigma2) - 1)
+    return kl_div
+
+def kl_loss(mu, sigma):
+    # https://arxiv.org/pdf/1901.05103 had a sigma of .01 which makes the clustering 
+    # better I assume than having overlapping gaussians
+    return kl_divergence(mu, sigma, 0, 0.01)
+
+def square_intensity_loss(intensity, max_div_by_N):
+    # max_div_by_N = time interval /number of of interactions
+    return -torch.log(intensity) + max_div_by_N*intensity
+
+def print_user_params(dataloader, print_var = False, num_examples=5):
+    i = 0
+    for batch in dataloader:
+        timestamps, item_recom, labels, means, logvar, idx = batch
+        print("means: ", means)
+        if (print_var):
+            print("logvar: ", logvar)
+        i+=1
+        if i >= num_examples:
+            return
+
+def logging_func(loss_all, loss_base, loss_kl, loss_intensity):
+    print(f"loss_all: {loss_all:.2f} \tloss_base: {loss_base:.2f} \tloss_kl: {loss_kl:.2f} \tloss_intensity:  {loss_intensity:.2f} \tlog of the loss: {math.log(loss_all):.2f}")
+
+#__________________________________________________old___________________________
 
 def bow(s: np.ndarray) -> str:
     """
