@@ -314,7 +314,7 @@ class User_State_Intensity_Model(nn.Module):
         out = self.ode(state)
         return out
 
-    def forward(self, time, state, state_model, h_0 = 0, interval_time=.2):
+    def forward(self, time, state, state_model, h_0 = 0, interval_time=.1):
         """
         Evaluate the integral of the intensity function over discrete time intervals.
 
@@ -329,14 +329,17 @@ class User_State_Intensity_Model(nn.Module):
             torch.Tensor: Intensity tensor.
         """
         out = 0.
-        num_intervals = int(math.ceil(time.item()/interval_time))
+        num_intervals = int(math.floor(time.item()/interval_time))
         #print(num_intervals)
         if num_intervals==0:
             print("time: ", time)
         for _ in range(num_intervals):
             state = state_model(start_state=state, h=interval_time)
-            out += self.ode(state)
+            out += self.ode(state) *interval_time
         
+        rest_interval = time.item()%interval_time
+        state = state_model(start_state=state, h=rest_interval)
+        out += self.ode(state) *rest_interval
         #needs to be >= 0   maybe also <=1?
         #out = nn.functional.relu(out)
         out = nn.functional.sigmoid(out)
