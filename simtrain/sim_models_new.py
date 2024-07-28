@@ -6,6 +6,7 @@ from typing import Tuple, Dict, Callable
 import math
 
 ODE_GRADIENT_CLIP = 1e4
+MIN_INTEGRAL = 1e-2
 
 class Base_Model(nn.Module):
     """
@@ -72,6 +73,8 @@ class Ode_Function(Base_Model):
         out = self.model(state)
         out = torch.clip(out, min= -ODE_GRADIENT_CLIP, max=ODE_GRADIENT_CLIP)
         return out
+    
+
 class Ode_Function_Conditioned(Base_Model):
     """
     A neural network model specifically for ODE functions, inheriting from Base_Model.
@@ -139,25 +142,50 @@ class User_State_Model(nn.Module):
             state += self.noise * torch.randn(state.shape) * h
         return state
     
-    def forward(self, start_state: torch.Tensor, h: int, h_0: int = 0):
+    def forward_old(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
         """
         Evolve the state from time h_0 to h using ODE integration.
 
         Args:
-            start_state (torch.Tensor): Initial state tensor.
+            state (torch.Tensor): Initial state tensor.
             h (int): Time interval for evolution.
             h_0 (int): Initial time. Default is 0.
 
         Returns:
             torch.Tensor: State tensor at time h.
         """
-        t = torch.tensor([h_0, h], dtype=torch.float32)  # Time points for the integration
         
         # can specify max error if desired
-        h_t = odeint(self.ode_func, start_state, t)  # h_t contains the states at t=0 and t=h
-        end_state = h_t[1]
+        if h > MIN_INTEGRAL:
+            t = torch.tensor([h_0, h], dtype=torch.float32)  # Time points for the integration
+            state = odeint(self.ode_func, state, t)[1]  # h_t contains the states at t=0 and t=h
 
-        return end_state
+        state = self.add_noise(state, h)
+        return state
+    
+    def forward(self, state: torch.Tensor, h: int, interval_time=.02):# discrete
+        """
+        Evaluate the integral of the state function over discrete time intervals.
+
+        Args:
+            state (torch.Tensor): State tensor.
+            h (float): Time. 
+            interval_time (float): Time step size. Default is 0.02.
+
+        Returns:
+            torch.Tensor: state tensor.
+        """
+        num_intervals = int(math.floor(h/interval_time))
+
+        for _ in range(num_intervals):
+            state = state+self.ode_func(interval_time, state)*interval_time
+        
+        rest_interval = h%interval_time
+        if MIN_INTEGRAL < rest_interval:# numerical issues
+            state = state+self.ode_func(rest_interval, state)
+
+        #state = self.add_noise(state, h)
+        return state
 
 
 class Conditioned_User_State_Model(nn.Module):
@@ -309,8 +337,8 @@ class User_State_Intensity_Model(nn.Module):
         Returns:
             torch.Tensor: Derivative of the state.
         """
-        if t >1e-8:# otherwise there is errors
-            state = user_state_model(state, t)        
+        #if t >1e-8:# otherwise there is errors
+        state = user_state_model(state, t)        
         out = self.ode(state)
         return out
 
@@ -330,16 +358,16 @@ class User_State_Intensity_Model(nn.Module):
         """
         out = 0.
         num_intervals = int(math.floor(time.item()/interval_time))
-        #print(num_intervals)
-        if num_intervals==0:
-            print("time: ", time)
+
         for _ in range(num_intervals):
-            state = state_model(start_state=state, h=interval_time)
+            state = state_model(state, h=interval_time)
             out += self.ode(state) *interval_time
         
         rest_interval = time.item()%interval_time
-        state = state_model(start_state=state, h=rest_interval)
-        out += self.ode(state) *rest_interval
+        if MIN_INTEGRAL < rest_interval:# numerical issues
+            state = state_model(state, h=rest_interval)
+            out += self.ode(state) *rest_interval
+
         #needs to be >= 0   maybe also <=1?
         #out = nn.functional.relu(out)
         out = nn.functional.sigmoid(out)
@@ -379,13 +407,13 @@ class global_Intensity_Model_ODE(Base_Model):
 
         super(global_Intensity_Model_ODE, self).__init__(time_size, 1, model_hyp)
     
-    def forward(self, time, state):
+    def forward(self, time, intensity):
         """
         Compute the global intensity based on time.
 
         Args:
             time (torch.Tensor): Time tensor.
-            state (torch.Tensor): State tensor.
+            intensity (torch.Tensor): intensity tensor.
 
         Returns:
             torch.Tensor: Global intensity tensor.
@@ -407,7 +435,7 @@ class global_Intensity_Model(nn.Module):
         super(global_Intensity_Model, self).__init__()
         self.ode_func = global_Intensity_Model_ODE(time_size, model_hyp)
 
-    def forward(self, time, h_0 = 0):
+    def forward_old(self, time, h_0 = 0):
         """
         Compute the global intensity based on time using ODE integration.
 
@@ -422,7 +450,34 @@ class global_Intensity_Model(nn.Module):
         initial_cond = torch.tensor([0.0]) # don't like that
 
         out = odeint(self.ode_func, initial_cond, t)[1]
-        out = nn.functional.relu(out)
+        out = nn.functional.sigmoid(out)
+        return out
+    
+    def forward(self, time, h_0 = 0, interval_time=.02):
+        """
+        Evaluate the integral of the intensity function over discrete time intervals.
+
+        Args:
+            time (torch.Tensor): Time tensor. (assume only 1 element)
+            h_0 (int): Initial time. Default is 0.
+            interval_time (float): Time step size. Default is 0.02.
+
+        Returns:
+            torch.Tensor: Intensity tensor.
+        """
+        out = torch.tensor([0.0])
+        num_intervals = int(math.floor(time.item()/interval_time))
+
+        for _ in range(num_intervals):
+            out = out + self.ode_func(time, out) *interval_time
+        
+        rest_interval = time.item()%interval_time
+        if MIN_INTEGRAL < rest_interval:# numerical issues
+            out = out + self.ode_func(time, out) *rest_interval
+
+        #needs to be >= 0   maybe also <=1?
+        #out = nn.functional.relu(out)
+        out = nn.functional.sigmoid(out)
         return out
 
 class Intensity_Model(nn.Module):
@@ -442,7 +497,7 @@ class Intensity_Model(nn.Module):
         self.global_model = global_Intensity_Model(time_size, model_hyp["global_model_hyp"])
 
     
-    def forward(self, state, time, state_model):
+    def forward(self, state, time_delta, time, state_model):
         """
         Compute the total intensity as the sum of user and global intensity models.
 
@@ -455,7 +510,7 @@ class Intensity_Model(nn.Module):
             torch.Tensor: Total intensity tensor.
         """
         intensity = 0
-        user_intensity = self.user_model(state=state, time=time, state_model=state_model)
+        user_intensity = self.user_model(state=state, time=time_delta, state_model=state_model)
         intensity += user_intensity
         # time might need to be incoded
         global_intensity = self.global_model(time)
@@ -618,17 +673,18 @@ class User_simmulation_Model(nn.Module):
         """
         self.state = state
     
-    def eval_intensity(self, h, return_all: bool = False):
+    def eval_intensity(self, time_delta, time, return_all: bool = False):
         """
         Evaluate the intensity function at a given time delta.
 
         Args:
-            h (torch.Tensor): Time delta tensor.
+            time_delta (torch.Tensor): Time delta tensor.
+            time(torch.Tensor): Time tensor.
 
         Returns:
             torch.Tensor: Intensity tensor.
         """
-        overall_intensity, user_intensity, local_intensity = self.intensity_model(self.state, h, state_model=self.state_model)
+        overall_intensity, user_intensity, local_intensity = self.intensity_model(self.state, time_delta, time, state_model=self.state_model)
         if return_all:
             return overall_intensity, user_intensity, local_intensity 
         return overall_intensity
@@ -707,7 +763,7 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
             h (torch.Tensor): Time interval.
         """
         #h = self.encode_time(h)
-        self.state = self.state_model(start_state=self.state, user_params=self.user_params,
+        self.state = self.state_model(self.state, user_params=self.user_params,
                                       h=h)
 
 if __name__ == "__main__":
