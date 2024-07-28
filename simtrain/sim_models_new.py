@@ -7,7 +7,7 @@ import math
 
 ODE_GRADIENT_CLIP = 1e4
 MIN_INTEGRAL = 1e-2
-
+EPSILON = 1e-6 # numerical errors
 class Base_Model(nn.Module):
     """
     A base neural network model with customizable layer widths.
@@ -453,7 +453,7 @@ class global_Intensity_Model(nn.Module):
         out = nn.functional.sigmoid(out)
         return out
     
-    def forward(self, time, h_0 = 0, interval_time=.02):
+    def forward(self, time, h_0 = 0, interval_time=.05):
         """
         Evaluate the integral of the intensity function over discrete time intervals.
 
@@ -515,6 +515,7 @@ class Intensity_Model(nn.Module):
         # time might need to be incoded
         global_intensity = self.global_model(time)
         intensity += global_intensity
+        intensity = torch.clamp(intensity, min=EPSILON, max=1-EPSILON)
         return intensity, user_intensity, global_intensity
 
 #______________________________________interaction_____________________________-
