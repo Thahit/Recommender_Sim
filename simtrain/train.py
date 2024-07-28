@@ -17,7 +17,7 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
     for interaction_id in range(N):#[0]
         h = (timestamps[interaction_id] - curr_time).float()
         
-        intensity = model.eval_intensity(h)+epsilon#pesilon for stability
+        intensity = model.eval_intensity(h, timestamps[interaction_id][0])+epsilon#ppsilon for stability
         
         #try:
         model.evolve_state(h)
@@ -62,7 +62,7 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
     for interaction_id in range(N):#[0]
         h = (timestamps[interaction_id][0] - curr_time).float()# update time
         
-        intensity = model.eval_intensity(h)+epsilon#pesilon for stability
+        intensity = model.eval_intensity(h, timestamps[interaction_id][0])+epsilon#epsilon for stability
         
         #try:
         model.evolve_state(h)
