@@ -53,11 +53,11 @@ def kl_loss(mu, sigma):
     # better I assume than having overlapping gaussians
     return kl_divergence(mu, sigma, 0, 0.01)
 
-def square_intensity_loss(intensity, max_div_by_N):
-    # max_div_by_N = time interval /number of of interactions
+def square_intensity_loss(intensity, extra_dic):
+    max_div_by_N = extra_dic["max_div_by_N"]
     return -torch.log(intensity) + max_div_by_N*intensity
 
-def log_loss(intensity):
+def log_loss(intensity, extra_dic):
     return -torch.log(intensity)
 
 def print_user_params(dataloader, print_var = False, num_examples=5):

@@ -17,7 +17,7 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
     for interaction_id in range(N):#[0]
         h = (timestamps[interaction_id] - curr_time).float()
         
-        intensity = model.eval_intensity(h, timestamps[interaction_id][0])+epsilon#ppsilon for stability
+        intensity = model.eval_intensity(h, timestamps[interaction_id])+epsilon#ppsilon for stability
         
         #try:
         model.evolve_state(h)
@@ -42,8 +42,8 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
         #print("true: ",y_true.shape, "\t predicted: ",y_pred.shape)
         #print(torch.unique(y_true))
         loss_base += loss_func(y_pred, y_true) # NLLL
-        
-        loss_intensity += intensity_loss_func(intensity, max_div_by_N)
+        extra_dic = {"max_div_by_N": max_div_by_N}
+        loss_intensity += intensity_loss_func(intensity, extra_dic)
     
     return loss_base, loss_intensity
 
@@ -89,8 +89,8 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
             #print("true: ",y_true.shape, "\t predicted: ",y_pred.shape)
             #print(torch.unique(y_true))
             loss_base += loss_func(y_pred, y_true) # NLLL
-        
-            loss_intensity += positive_examples_weight * intensity_loss_func(intensity)
+            extra_dic = {}
+            loss_intensity += positive_examples_weight * intensity_loss_func(intensity, extra_dic)
 
         else:# negative example
             loss_intensity += intensity_loss_func(1-intensity)# punish
