@@ -6,8 +6,13 @@ from typing import Tuple, Dict, Callable
 import math
 
 ODE_GRADIENT_CLIP = 1e4
-MIN_INTEGRAL = 1e-2
+MIN_INTEGRAL = 1e-3
 EPSILON = 1e-6 # numerical errors
+
+def smoothclamp(x, mi, mx): 
+    # https://stackoverflow.com/questions/45165452/how-to-implement-a-smooth-clamp-function-in-python
+    return mi + (mx-mi)*(lambda t: torch.where(t < 0 , 0, torch.where( t <= 1 , 3*t**2-2*t**3, 1 ) ) )( (x-mi)/(mx-mi) )
+
 class Base_Model(nn.Module):
     """
     A base neural network model with customizable layer widths.
@@ -71,7 +76,8 @@ class Ode_Function(Base_Model):
             torch.Tensor: Output tensor representing the derivative of the state.
         """
         out = self.model(state)
-        out = torch.clip(out, min= -ODE_GRADIENT_CLIP, max=ODE_GRADIENT_CLIP)
+        #out = torch.clip(out, min= -ODE_GRADIENT_CLIP, max=ODE_GRADIENT_CLIP)
+        out = smoothclamp(out, -ODE_GRADIENT_CLIP, ODE_GRADIENT_CLIP)
         return out
     
 
@@ -86,7 +92,7 @@ class Ode_Function_Conditioned(Base_Model):
     """
     def __init__(self, state_size: int, user_params_size: int, model_hyp: Dict):
         # time as input or integrate?, for now integrate
-        super(Ode_Function, self).__init__(state_size + user_params_size, state_size, model_hyp)
+        super(Ode_Function_Conditioned, self).__init__(state_size + user_params_size, state_size, model_hyp)
     
     def forward(self, time, state, user_params):
         """
@@ -100,9 +106,10 @@ class Ode_Function_Conditioned(Base_Model):
         Returns:
             torch.Tensor: Output tensor representing the derivative of the state.
         """
-        out = torch.cat(state, user_params, dim=1)
+        out = torch.cat((state, user_params), dim=1)
         out = self.model(out)
-        out = torch.clip(out, min= -ODE_GRADIENT_CLIP, max=ODE_GRADIENT_CLIP)
+        #out = torch.clip(out, min= -ODE_GRADIENT_CLIP, max=ODE_GRADIENT_CLIP)
+        out = smoothclamp(out, -ODE_GRADIENT_CLIP, ODE_GRADIENT_CLIP)
         return out
 
 
@@ -139,10 +146,10 @@ class User_State_Model(nn.Module):
             torch.Tensor: Noisy state tensor.
         """
         if self.noise > 0:
-            state += self.noise * torch.randn(state.shape) * h
+            state =  state + self.noise * torch.randn(state.shape) * h
         return state
     
-    def forward_old(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
+    def forward(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
         """
         Evolve the state from time h_0 to h using ODE integration.
 
@@ -163,7 +170,7 @@ class User_State_Model(nn.Module):
         state = self.add_noise(state, h)
         return state
     
-    def forward(self, state: torch.Tensor, h: int, interval_time=.02):# discrete
+    def forward2(self, state: torch.Tensor, h: int, interval_time=.02):# discrete
         """
         Evaluate the integral of the state function over discrete time intervals.
 
@@ -241,50 +248,33 @@ class Conditioned_User_State_Model(nn.Module):
         end_state = h_t[1]
 
         return end_state
-
-class User_State_Model_ensemble(nn.Module):
-    """
-    A model for simulating state evolution using ODEs, with optional noise addition.
-    Is an ensemble of User_state_models
-
-    Args:
-        state_size (int): Size of the state vector.
-        model_hyp (Dict): Dictionary containing model hyperparameters for the ODE function.
-        noise (int): scaling of the noise added.
-        num_models (int): size of ensemble.
-    """
-    def __init__(self, state_size: int, model_hyp: Dict, noise, num_models: int = 10, return_var = False):
-        super(User_State_Model_ensemble, self).__init__()
-        # for now not very bayesian but a skeleton
-
-        # last layer is linear= no activation
-        self.ensemble = []
-        self.return_var = return_var
-        for _ in range(num_models):
-            self.ensemble.append(User_State_Model(state_size=state_size, model_hyp=model_hyp, noise=noise))
-    
-    def forward(self, start_state: torch.Tensor, h: int, h_0: int = 0):
+    def forward(self, state: torch.Tensor, user_params: torch.Tensor, h: int, interval_time=.02):# discrete
         """
-        Evolve the state from time h_0 to h using ensemble_members
+        Evaluate the integral of the state function over discrete time intervals.
 
         Args:
-            start_state (torch.Tensor): Initial state tensor.
-            h (int): Time interval for evolution.
-            h_0 (int): Initial time. Default is 0.
+            state (torch.Tensor): State tensor.
+            user_params (torch.Tensor): User parameters to condition on.
+            h (float): Time. 
+            interval_time (float): Time step size. Default is 0.02.
 
         Returns:
-            torch.Tensor: State tensor at time h.
+            torch.Tensor: state tensor.
         """
-        outputs = []
-        for member in self.ensemble:
-            outputs.append(member(start_state, h))
+        num_intervals = int(math.floor(h/interval_time))
+        odefunc_partial = partial(self.ode_func, user_params=user_params)
 
-        outputs = torch.stack(outputs)
-        mean = outputs.mean(dim=0)
-        if not self.return_var:
-            return mean
-        uncertainty = outputs.var(dim=0)
-        return mean, uncertainty
+        for _ in range(num_intervals):
+            state = state + odefunc_partial(interval_time, state)*interval_time
+        
+        rest_interval = h%interval_time
+        if MIN_INTEGRAL < rest_interval:# numerical issues
+            state = state + odefunc_partial(rest_interval, state)
+
+        #state = self.add_noise(state, h)
+        return state
+
+
 #______________________________________intensity_____________________________-
 class User_State_Intensity_Model_ODE(Base_Model):
     """
@@ -342,7 +332,7 @@ class User_State_Intensity_Model(nn.Module):
         out = self.ode(state)
         return out
 
-    def forward(self, time, state, state_model, h_0 = 0, interval_time=.1):
+    def forward(self, time, state, state_model, h_0 = 0, interval_time=.1, user_params=None):
         """
         Evaluate the integral of the intensity function over discrete time intervals.
 
@@ -356,9 +346,11 @@ class User_State_Intensity_Model(nn.Module):
         Returns:
             torch.Tensor: Intensity tensor.
         """
-        out = 0.
+        out = torch.tensor([[0.0]]) 
         num_intervals = int(math.floor(time.item()/interval_time))
 
+        if not(user_params is None):
+            state_model = partial(state_model, user_params=user_params)
         for _ in range(num_intervals):
             state = state_model(state, h=interval_time)
             out += self.ode(state) *interval_time
@@ -418,7 +410,8 @@ class global_Intensity_Model_ODE(Base_Model):
         Returns:
             torch.Tensor: Global intensity tensor.
         """
-        x = self.model(time.unsqueeze(0))
+        x = self.model(time.unsqueeze(0)
+                       )
         #relu  anything non-negative
         #x = nn.functional.relu(x)
         return x
@@ -497,7 +490,7 @@ class Intensity_Model(nn.Module):
         self.global_model = global_Intensity_Model(time_size, model_hyp["global_model_hyp"])
 
     
-    def forward(self, state, time_delta, time, state_model):
+    def forward(self, state, time_delta, time, state_model, user_params=None):
         """
         Compute the total intensity as the sum of user and global intensity models.
 
@@ -510,12 +503,18 @@ class Intensity_Model(nn.Module):
             torch.Tensor: Total intensity tensor.
         """
         intensity = 0
-        user_intensity = self.user_model(state=state, time=time_delta, state_model=state_model)
+        if user_params is None:
+            user_intensity = self.user_model(state=state, time=time_delta, state_model=state_model)
+        else:
+            user_intensity = self.user_model(state=state, time=time_delta, state_model=state_model, user_params=user_params)
+
         intensity += user_intensity
         # time might need to be incoded
         global_intensity = self.global_model(time)
         intensity += global_intensity
-        intensity = torch.clamp(intensity, min=EPSILON, max=1-EPSILON)
+        #intensity = torch.clamp(intensity, min=EPSILON, max=1-EPSILON)
+        intensity = smoothclamp(intensity, EPSILON, 1-EPSILON)
+
         return intensity, user_intensity, global_intensity
 
 #______________________________________interaction_____________________________-
@@ -738,9 +737,9 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
         hyperparameter_dict (Dict): Dictionary containing all model hyperparameters, including 'state_size', 'time_size', 'recom_dim', 'num_recom', 'num_interaction_outcomes', and sub-model hyperparameters.
     """
     def __init__(self, hyperparameter_dict: Dict):
-        super(Conditioned_User_simmulation_Model, self).__init__()
+        super(Conditioned_User_simmulation_Model, self).__init__(hyperparameter_dict)
 
-        self.state_model = Conditioned_User_simmulation_Model(self.state_size, hyperparameter_dict["user_params_size"],
+        self.state_model = Conditioned_User_State_Model(self.state_size, hyperparameter_dict["user_params_size"],
                                             hyperparameter_dict["state_model"]["model_hyp"],
                                             noise=hyperparameter_dict["state_model"].get("noise", 0))
 
@@ -766,6 +765,23 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
         #h = self.encode_time(h)
         self.state = self.state_model(self.state, user_params=self.user_params,
                                       h=h)
+    
+    def eval_intensity(self, time_delta, time, return_all: bool = False):
+        """
+        Evaluate the intensity function at a given time delta.
+
+        Args:
+            time_delta (torch.Tensor): Time delta tensor.
+            time(torch.Tensor): Time tensor.
+
+        Returns:
+            torch.Tensor: Intensity tensor.
+        """
+        overall_intensity, user_intensity, local_intensity = self.intensity_model(self.state, 
+                    time_delta, time, state_model=self.state_model, user_params=self.user_params)
+        if return_all:
+            return overall_intensity, user_intensity, local_intensity 
+        return overall_intensity
 
 if __name__ == "__main__":
     # test code

@@ -5,10 +5,15 @@ from tqdm import tqdm
 GRADIENT_CLIPPING_MAX_NORM = 2.
 
 def train_1_path_positive(model, user_state, timestamps, items, labels, loss_func, num_classes, 
-                 intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True):
+                 intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True,
+                 conditioned=False):
     ''' expects batchsize of 1
     '''
-    model.init_state(user_state)
+    if conditioned:
+        user_params = torch.clone(user_state)
+        model.init_state(user_state, user_params)
+    else:
+        model.init_state(user_state)
     loss_base = 0.
     loss_intensity = 0.
     curr_time = 1e-10# because time 0 is used sadly
@@ -49,10 +54,14 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
 
 def train_1_path_positive_and_negative(model, user_state, timestamps, items, labels, loss_func, num_classes, 
                  intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True,
-                 positive_examples_weight=1):
+                 positive_examples_weight=1, conditioned=False):
     ''' expects batchsize of 1
     '''
-    model.init_state(user_state)
+    if conditioned:
+        user_params = torch.clone(user_state)
+        model.init_state(user_state, user_params)
+    else:
+        model.init_state(user_state)
     loss_base = 0.
     loss_intensity = 0.
     curr_time = 1e-10# because time 0 is used sadly
@@ -71,6 +80,7 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
         #    print(e)
 
         curr_time = h
+        extra_dic = {}
         if timestamps[interaction_id][1]:# positive example
             positive_id = timestamps[interaction_id][2]
             # no intensity for now
@@ -89,17 +99,16 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
             #print("true: ",y_true.shape, "\t predicted: ",y_pred.shape)
             #print(torch.unique(y_true))
             loss_base += loss_func(y_pred, y_true) # NLLL
-            extra_dic = {}
             loss_intensity += positive_examples_weight * intensity_loss_func(intensity, extra_dic)
 
         else:# negative example
-            loss_intensity += intensity_loss_func(1-intensity)# punish
+            loss_intensity += intensity_loss_func(1-intensity, extra_dic)# punish
     return loss_base, loss_intensity
 
 
 def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func_kl, optimizer, num_classes, 
             intensity_loss_func, logger, max_time,lr_scheduler, warmup_scheduler,
-            kl_weight = 1, user_lr = None, log_step_size = 1, warmup_period=100):
+            kl_weight = 1, user_lr = None, log_step_size = 1, warmup_period=100, conditioned=False):
     model.to(device)
     for epoch in tqdm(range(num_epochs)):  # Example: Number of epochs
         loss_all, loss_base, loss_kl, loss_intensity = 0, 0, 0, 0
@@ -126,7 +135,8 @@ def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func
             curr_loss_base, curr_loss_intensity = train_1_path_positive(model=model, user_state=user_state, 
                             timestamps=timestamps, items=item_recom, labels=labels,  
                          loss_func=loss_func, max_time=max_time, num_classes=num_classes, 
-                         device=device, intensity_loss_func=intensity_loss_func)
+                         device=device, intensity_loss_func=intensity_loss_func,
+                         conditioned=conditioned)
 
             curr_loss_kl = kl_weight * torch.sum(loss_func_kl(means, variances))#.view(1,-1)
             
@@ -168,7 +178,7 @@ def train_with_negatives(model, device, dataloader,num_epochs, state_size, loss_
             loss_func_kl, optimizer, num_classes, 
             intensity_loss_func, logger, max_time, lr_scheduler, warmup_scheduler,
             kl_weight=1, user_lr=None, log_step_size=1, warmup_period=100,
-            num_negatives=10, positive_examples_weight=1):
+            num_negatives=10, positive_examples_weight=1, conditioned=False):
     model.to(device)
     for epoch in tqdm(range(num_epochs)):  # Example: Number of epochs
         loss_all, loss_base, loss_kl, loss_intensity = 0, 0, 0, 0
@@ -182,7 +192,14 @@ def train_with_negatives(model, device, dataloader,num_epochs, state_size, loss_
             
 
             negative_times = torch.FloatTensor(num_negatives).uniform_(0, max_time).to(device)
-            all_times = [(t, False, None) for t in negative_times if t not in timestamps]# time, is positive, id of extra data
+            #all_times = [(t, False, None) for t in negative_times if t not in timestamps]# time, is positive, id of extra data
+            all_times = []
+    
+            for t in negative_times:
+                # Check if `t` is within the tolerance of any timestamp
+                if torch.any(torch.abs(timestamps - t) <= 1e-4):
+                    all_times.append((t, False, None))
+            
             all_times.extend([(timestamps[i], True, i) for i in range(len(timestamps))])
             all_times = sorted(all_times, key=lambda x: x[0])
 
@@ -202,7 +219,7 @@ def train_with_negatives(model, device, dataloader,num_epochs, state_size, loss_
                             timestamps=all_times, items=item_recom, labels=labels,  
                          loss_func=loss_func, max_time=max_time, num_classes=num_classes, 
                          device=device, intensity_loss_func=intensity_loss_func, 
-                         positive_examples_weight=positive_examples_weight)
+                         positive_examples_weight=positive_examples_weight, conditioned=conditioned)
 
             curr_loss_kl = kl_weight * torch.sum(loss_func_kl(means, variances))#.view(1,-1)
             
