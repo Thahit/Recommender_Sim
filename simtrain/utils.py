@@ -72,7 +72,7 @@ def print_user_params(dataloader, print_var = False, num_examples=5):
             return
 
 def logging_func(loss_all, loss_base, loss_kl, loss_intensity):
-    print(f"loss_all: {loss_all:.2f} \tloss_base: {loss_base:.2f} \tloss_kl: {loss_kl:.2f} \tloss_intensity:  {loss_intensity:.2f} \tlog of the loss: {math.log10(loss_all):.2f}")
+    print(f"loss_all: {loss_all:.3f} \tloss_base: {loss_base:.3f} \tloss_kl: {loss_kl:.3f} \tloss_intensity:  {loss_intensity:.3f} \tlog of the loss: {math.log10(loss_all):.2f}")
 
 #__________________________________________________old___________________________
 
