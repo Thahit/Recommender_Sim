@@ -14,7 +14,8 @@ DAYS_PER_HOUR = 1 / 24.
 
 def plot_rnd_user_visits_new(state_size: int, max_time: int, dataset: Dataset, User_model,
                         use_true_recommendations: bool =True, num_classes:int = 2,
-                        teacher_forcing: bool =True, user_idx: int=None) \
+                        teacher_forcing: bool =True, user_idx: int=None, conditioned=False,
+                        increment =.1) \
         -> Tuple[np.ndarray, np.ndarray]:
     """
         Plot the visits and Poisson process intensities (and print summary statistics) for a random member.
@@ -42,16 +43,21 @@ def plot_rnd_user_visits_new(state_size: int, max_time: int, dataset: Dataset, U
         #print('ave imp per day for user', len(user_rewards) / (max_time))
         #print('ave imp per visit for user', simulation_u.groupby('time').time.count().mean())
 
-
-    ts = np.arange(0, max_time, DAYS_PER_HOUR / 2)  # plot increments of half hour
+    # should probably match the integral step size in the models
+    #DAYS_PER_HOUR/2
+    ts = torch.arange(0, max_time, increment)  # plot increments of half hour
 
     outputs = [[0, 0, 0]]
-    User_model.init_state(user_params)
+    if conditioned:
+        User_model.init_state(user_params, torch.clone(user_params))
+        
+    else:
+        User_model.init_state(user_params)
     with torch.no_grad():
         for time_id in range(1,len(ts)):
             time_delta = ts[time_id] - ts[time_id-1]#pointless calc since its evenly spaced but maybe It ll change
             User_model.evolve_state(time_delta)
-            overall_intensity, user_intensity, global_intensity = User_model.eval_intensity(time_delta, return_all = True)
+            overall_intensity, user_intensity, global_intensity = User_model.eval_intensity(time_delta, ts[time_id], return_all = True)
             outputs.append([overall_intensity.item(), user_intensity.item(),
                             global_intensity.item()])
             
@@ -79,13 +85,14 @@ def plot_rnd_user_visits_new(state_size: int, max_time: int, dataset: Dataset, U
                                "\t before a recommendation.")
                         # interact with them
                         if teacher_forcing:
-
                             y_pred=torch.as_tensor(reactions)
                             y_pred = torch.nn.functional.one_hot(y_pred, num_classes=num_classes).float()
 
                         else:
                             recommendations = torch.as_tensor(recommendations)
                             y_pred = User_model.view_recommendations(recommendations)
+                            y_pred = y_pred.squeeze(0)
+                            y_pred = torch.nn.functional.log_softmax(y_pred)
                         User_model.jump(y_pred)
                 else:
                     raise NotImplementedError
