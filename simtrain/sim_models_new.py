@@ -36,7 +36,19 @@ class Base_Model(nn.Module):
             last_w = w
         layers.append(nn.Linear(last_w, ndims_out))
         self.model = nn.Sequential(*layers)
+
+        self._initialize_weights()
     
+    def _initialize_weights(self):
+        """
+        Initialize weights and biases with normal distribution (mean=0, std=1).
+        """
+        for module in self.model:
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, mean=0, std=1)
+                if module.bias is not None:
+                    nn.init.normal_(module.bias, mean=0, std=1)
+
     def forward(self, x):
         """
         Forward pass through the model.

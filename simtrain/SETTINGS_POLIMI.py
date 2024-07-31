@@ -142,8 +142,10 @@ rootpaths = {
 }
 
 filepaths_new = {
-    'user_model': join(rootpaths['models'], rootpaths['new'], 'user_model.h5'),
-    'optimized_data': join(rootpaths['models'], rootpaths['new'], 'data.h5'),
+#    'user_model': join(rootpaths['models'], rootpaths['new'], 'user_model.h5'),
+#    'optimized_data': join(rootpaths['models'], rootpaths['new'], 'data.h5'),
+    'simulate_intensity_model': join(rootpaths['models'], 'simulate_intensity', 'gnerator_model.h5'), 
+    "copy_intensity_model": join(rootpaths['models'], 'simulate_intensity', 'copy_model.h5'),
 }
 
 filepaths = {
