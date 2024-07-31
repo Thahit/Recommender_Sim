@@ -10,29 +10,6 @@ MIN_INTEGRAL = 1e-5
 EPSILON = 1e-6 # numerical errors
 
 
-def smoothclamp_bad(x, mi, mx): 
-    # https://stackoverflow.com/questions/45165452/how-to-implement-a-smooth-clamp-function-in-python
-    return mi + (mx-mi)*(lambda t: torch.where(t < 0 , 0, torch.where( t <= 1 , 3*t**2-2*t**3, 1 ) ) )( (x-mi)/(mx-mi) )
-
-def smoothclamp(x, a, b, scale=0.1):
-    """
-    Apply a soft clamping to ensure values are within [b, a] using tanh function.
-
-    Args:
-        x (torch.Tensor): Input tensor.
-        a (float): Upper bound.
-        b (float): Lower bound.
-        scale (float): Scaling factor for tanh function.
-
-    Returns:
-        torch.Tensor: Tensor with values clamped within [b, a].
-    """
-    x = nn.functional.softplus(x)
-    x = -x +1
-    x = nn.functional.softplus(x)
-    x = -x +1
-    return x 
-
 def smoothclamp_0_1(x):
     x= torch.as_tensor(x)
     x = nn.functional.tanh(2*x - 1)+1
@@ -330,6 +307,7 @@ class User_State_Intensity_Model_ODE(Base_Model):
         
         return x
 
+
 class User_State_Intensity_Model(nn.Module):
     """
     A model for evaluating intensity functions with ODE integration over time.
@@ -422,6 +400,7 @@ class User_State_Intensity_Model(nn.Module):
         out = torch.exp(-out).clone()
         return out
 
+
 class global_Intensity_Model_ODE(Base_Model):
     """
     A neural network model for computing the global intensity function (constant for all users) of time.
@@ -450,6 +429,7 @@ class global_Intensity_Model_ODE(Base_Model):
         x = nn.functional.softplus(x)
 
         return x
+
 
 class global_Intensity_Model(nn.Module):
     """
@@ -480,7 +460,7 @@ class global_Intensity_Model(nn.Module):
         out = odeint(self.ode_func, initial_cond, t)[1]
         out = nn.functional.sigmoid(out)
         return out
-    
+
     def forward(self, time, h_0 = 0, interval_time=torch.as_tensor([.2])):
         """
         Evaluate the integral of the intensity function over discrete time intervals.
@@ -507,6 +487,7 @@ class global_Intensity_Model(nn.Module):
         #out = nn.functional.sigmoid(out)
         out= torch.exp(-out)
         return out
+
 
 class Intensity_Model(nn.Module):
     """
@@ -856,49 +837,6 @@ class Toy_intensity_Generator(nn.Module):
         return integral_value - target 
         #return torch.pow(integral_value - target , 2)
 
-    def optimize_h(self, u, lr=0.01, num_iterations=3):#bad
-        h = nn.Parameter(torch.tensor([.1]))# Initial guess for h
-        optimizer = torch.optim.Adam([h], lr=lr)
-        for _ in range(num_iterations):
-            optimizer.zero_grad()
-            loss = self.objective_function(h, u)
-
-            loss.backward()
-            optimizer.step()
-        return h
-
-    def binary_search(self, state, target, low= 1e-10, high=200, tol=1e-6, max_iter=50):
-        """
-        Perform binary search to find the point where func(x) is close to the target value.
-
-        Args:
-            func (callable): The function to evaluate.
-            target (float): The target value to find.
-            low (float): The lower bound of the interval.
-            high (float): The upper bound of the interval.
-            tol (float): The tolerance for stopping the search.
-            max_iter (int): The maximum number of iterations.
-
-        Returns:
-            float: The x value where func(x) is close to the target.
-        """
-        if target <= low:
-            return 0
-        for _ in range(max_iter):
-            mid = (low + high) / 2
-            if(abs(low - high) < 1e-10):
-                return mid
-            f_mid = self.objective_function(mid, target, state)
-
-            if abs(f_mid - target) < tol:
-                return mid
-            elif f_mid > target:
-                low = mid
-            else:
-                high = mid
-        print(target)
-        return high
-    
     def find_h(self, state, uniform_guess, interval_size=.01, max_iter=10_000):
         y = torch.zeros((1,1), requires_grad=False)
         target = -torch.log(uniform_guess)
@@ -920,8 +858,20 @@ class Toy_intensity_Generator(nn.Module):
         #h_optimized = self.binary_search(state, u)
         with torch.no_grad():
             h_optimized = self.find_h(state, u)
-        print(h_optimized)
-        return torch.flatten(h_optimized).detach().numpy()
+        return torch.flatten(h_optimized)
+    
+    def sample_path(self, num_samples = 10,state = None):
+        if state is None:
+            state = torch.zeros((1,self.state_size))
+        path = []
+        curr_time = 0
+        for _ in range(num_samples):
+            h = self.sample_one(state=state)
+            curr_time = curr_time + h
+            path.append(curr_time)
+            state = self.user_state_model(state=state, h=h)
+        path = torch.stack(path)
+        return path.detach().numpy()
 
 
 if __name__ == "__main__":
