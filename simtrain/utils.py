@@ -17,6 +17,33 @@ os.environ['NUMEXPR_MAX_THREADS'] = '16'
 #loss_func = nn.functional.mse_loss
 loss_func = nn.NLLLoss()
 
+def energy_score_loss(forecast_samples, observed_value, beta=1.):
+    """
+    Compute the energy score loss for a set of forecast samples and an observed value.
+    
+    Args:
+        forecast_samples (torch.Tensor): Samples drawn from the forecast distribution (shape: [N, D]).
+        observed_value (torch.Tensor): The observed outcome (shape: [D]).
+        
+    Returns:
+        torch.Tensor: The energy score loss.
+    """
+    N = forecast_samples.size(0)
+
+    # Compute distances between the observed value and forecast samples
+    distances_to_observed = torch.pow(torch.norm(forecast_samples - observed_value, 
+                                                 dim=1), beta)
+    
+    # Compute pairwise distances between forecast samples
+    pairwise_distances = torch.pow(torch.cdist(forecast_samples, forecast_samples, p=2),
+                                   beta)
+    
+    term1 = distances_to_observed.mean() * 2
+    term2 = pairwise_distances.mean() 
+    
+    energy_score = term1 - term2
+    return energy_score
+
 def kl_divergence(mu1, sigma1, mu2, sigma2):
     """
     Compute the KL divergence between two normal distributions N(mu1, sigma1^2) and N(mu2, sigma2^2).
@@ -33,6 +60,7 @@ def kl_divergence(mu1, sigma1, mu2, sigma2):
     kl_div = torch.log(sigma2 / sigma1) + ((sigma1 ** 2 + (mu1 - mu2) ** 2) / (2 * sigma2 ** 2)) - 0.5
     return kl_div
 
+
 def kl_divergence_to_standard_normal(mu, sigma):
     """
     Compute the KL divergence from a normal distribution N(mu, sigma^2) to the standard normal distribution N(0, 1).
@@ -48,17 +76,21 @@ def kl_divergence_to_standard_normal(mu, sigma):
     kl_div = 0.5 * (sigma2 + mu ** 2 - torch.log(sigma2) - 1)
     return kl_div
 
+
 def kl_loss(mu, sigma):
     # https://arxiv.org/pdf/1901.05103 had a sigma of .01 which makes the clustering 
     # better I assume than having overlapping gaussians
     return kl_divergence(mu, sigma, 0, 0.01)
 
+
 def square_intensity_loss(intensity, extra_dic):
     max_div_by_N = extra_dic["max_div_by_N"]
     return -torch.log(intensity) + max_div_by_N*intensity
 
+
 def log_loss(intensity, extra_dic):
     return -torch.log(intensity)
+
 
 def print_user_params(dataloader, print_var = False, num_examples=5):
     i = 0
@@ -70,6 +102,7 @@ def print_user_params(dataloader, print_var = False, num_examples=5):
         i+=1
         if i >= num_examples:
             return
+
 
 def logging_func(loss_all, loss_base, loss_kl, loss_intensity):
     print(f"loss_all: {loss_all:.3f} \tloss_base: {loss_base:.3f} \tloss_kl: {loss_kl:.3f} \tloss_intensity:  {loss_intensity:.3f} \tlog of the loss: {math.log10(loss_all):.2f}")
