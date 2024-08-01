@@ -7,7 +7,7 @@ import math
 
 ODE_GRADIENT_CLIP = 1e4
 MIN_INTEGRAL = 1e-5
-EPSILON = 1e-6 # numerical errors
+EPSILON = 1e-20 # numerical errors
 
 
 def smoothclamp_0_1(x):
@@ -308,12 +308,14 @@ class User_State_Intensity_Model_ODE(Base_Model):
         Compute the intensity based on the state.
 
         Args:
+            y (torch.Tensor): intensity.
             state (torch.Tensor): State tensor.
 
         Returns:
             torch.Tensor: Intensity tensor.
         """
-        x = torch.cat((state, y), dim=1)
+        #x = torch.cat((state, y), dim=1)
+        x = state
         x = self.model(x)
         x = nn.functional.softplus(x)
         
@@ -330,7 +332,7 @@ class User_State_Intensity_Model(nn.Module):
     """
     def __init__(self, state_size: int, model_hyp: Dict):
         super(User_State_Intensity_Model, self).__init__()
-        self.ode = User_State_Intensity_Model_ODE(state_size+1, model_hyp)# 1 for intensity
+        self.ode = User_State_Intensity_Model_ODE(state_size, model_hyp)# 1 for intensity
 
     def odefunc(self, t, y, state, user_state_model):
         """
@@ -522,7 +524,7 @@ class Intensity_Model(nn.Module):
         self.global_model = global_Intensity_Model(time_size, model_hyp["global_model_hyp"])
 
     
-    def forward(self, state, time_delta, start_time, state_model, interval_time= .2, user_params=None):
+    def forward(self, state, time_delta, start_time, state_model, interval_time= .02, user_params=None):
         """
         Compute the total intensity as the sum of user and global intensity models.
 
@@ -556,9 +558,13 @@ class Intensity_Model(nn.Module):
             curr_time = curr_time +interval_time
 
         #   extra step
-        #rest_interval = h%interval_time
-        #if MIN_INTEGRAL < rest_interval:
-
+        rest_interval = time_delta.item()%interval_time
+        if MIN_INTEGRAL < rest_interval:
+            user_intensity = user_intensity + (self.user_intensity_model(state, rest_interval, user_intensity) * rest_interval).clone()
+            global_intensity = global_intensity + (self.global_model(curr_time) * rest_interval).clone()
+            out_user = out_user + user_intensity
+            out_global = out_global + global_intensity
+            #state = state_model(h=interval_time, state=state)
         #intensity = torch.clamp(intensity, min=EPSILON, max=1-EPSILON)
         #intensity = smoothclamp(intensity, EPSILON, 1-EPSILON)
         #out = smoothclamp_0_1(intensity)
@@ -853,28 +859,31 @@ class Toy_intensity_Generator(nn.Module):
         
         #self.state = torch.zeros((1,self.state_size))
 
-    def find_h(self, state, uniform_guess, interval_size=.01, max_iter=10_000):
-        y = torch.zeros((1,1), requires_grad=False)
-        target = -torch.log(uniform_guess)
+    def find_h(self, state, uniform_guess, interval_size=.01, max_iter=2_000):
+        intensity = torch.zeros((1,1), requires_grad=True)
+        #h = torch.zeros((1,1), requires_grad=True)# torch.tensor([EPSILON], requires_grad=True)
+        target = -torch.log(uniform_guess+EPSILON)
         curr_state = state
-        for _ in range(max_iter):
+        for i in range(max_iter):
             curr_state = self.user_state_model(curr_state, interval_size)
-            prob_increase = self.intensity_model.ode(y, curr_state)*interval_size
-            y = y+ prob_increase
-            if y > target:
-                return y
-        return y
+            intensity = intensity + (self.intensity_model(h = interval_size, 
+                                intensity=intensity, state=curr_state)*interval_size).clone()
+            
+            if intensity > target:
+                return interval_size * i
+        return interval_size * max_iter
 
     def sample_one(self, state):
         #from scipy.optimize import brentq
 
-        u = torch.rand(1, requires_grad=False)
+        u = torch.rand(1, requires_grad=False)# theoretically one should also do -u + 1
         #h_optimized = self.optimize_h(u)
         #h_optimized = brentq(self.objective_function, 1e-30, 200, args=(u, state), 
         #                    maxiter=40, xtol=1e-7,)
         #h_optimized = self.binary_search(state, u)
         
         h_optimized = self.find_h(state, u)
+        print(f"u: {u} \t h: {h_optimized}")
         return torch.flatten(h_optimized)
     
     def sample_path(self, num_samples = 10,state = None):
