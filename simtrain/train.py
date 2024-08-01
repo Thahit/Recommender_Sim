@@ -22,7 +22,7 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
     for interaction_id in range(N):#[0]
         h = (timestamps[interaction_id] - curr_time).float()
         
-        intensity = model.eval_intensity(h, timestamps[interaction_id])+epsilon#ppsilon for stability
+        intensity = model.eval_intensity(h, torch.FloatTensor([curr_time]))#+epsilon#ppsilon for stability
         
         #try:
         model.evolve_state(h)
@@ -30,9 +30,9 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
         #    print("delta: ",h , "\tnew: ", timestamps[interaction_id], "\told: ", curr_time)
         #    print(e)
 
-        curr_time = h
         # no intensity for now
         y_pred = model.view_recommendations(items[interaction_id])# :,
+        y_pred = nn.functional.log_softmax(y_pred, dim=1)
         y_true = torch.as_tensor(labels[interaction_id])# :,
         y_true_onehot = nn.functional.one_hot(y_true, num_classes=num_classes).float()
         
@@ -43,12 +43,15 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
         #loss += loss_func(y_true, y_pred)# for mse
         y_true = y_true.squeeze(0)
         y_pred = y_pred.squeeze(0)
-        y_pred = nn.functional.log_softmax(y_pred)
         #print("true: ",y_true.shape, "\t predicted: ",y_pred.shape)
         #print(torch.unique(y_true))
         loss_base += loss_func(y_pred, y_true) # NLLL
+        #print("true: ",y_true, "\t predicted: ",y_pred)
+        #print("loss: ", loss_base)
         extra_dic = {"max_div_by_N": max_div_by_N}
+
         loss_intensity += intensity_loss_func(intensity, extra_dic)
+        curr_time = h
     
     return loss_base, loss_intensity
 
@@ -85,6 +88,7 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
             positive_id = timestamps[interaction_id][2]
             # no intensity for now
             y_pred = model.view_recommendations(items[positive_id])# :,
+            y_pred = nn.functional.log_softmax(y_pred, dim=1)
             y_true = torch.as_tensor(labels[positive_id])# :,
             y_true_onehot = nn.functional.one_hot(y_true, num_classes=num_classes).float()
             
@@ -95,10 +99,11 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
             #loss += loss_func(y_true, y_pred)# for mse
             y_true = y_true.squeeze(0)
             y_pred = y_pred.squeeze(0)
-            y_pred = nn.functional.log_softmax(y_pred)
-            #print("true: ",y_true.shape, "\t predicted: ",y_pred.shape)
             #print(torch.unique(y_true))
+            #print(y_pred)
+            #print(y_true)
             loss_base += loss_func(y_pred, y_true) # NLLL
+
             loss_intensity += positive_examples_weight * intensity_loss_func(intensity, extra_dic)
 
         else:# negative example
@@ -110,6 +115,8 @@ def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func
             intensity_loss_func, logger, max_time,lr_scheduler, warmup_scheduler,
             kl_weight = 1, user_lr = None, log_step_size = 1, warmup_period=100, conditioned=False):
     model.to(device)
+    #torch.autograd.set_detect_anomaly(True)
+
     for epoch in tqdm(range(num_epochs)):  # Example: Number of epochs
         loss_all, loss_base, loss_kl, loss_intensity = 0, 0, 0, 0
         #print_user_params(dataloader)# see if values change
@@ -140,16 +147,25 @@ def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func
 
             curr_loss_kl = kl_weight * torch.sum(loss_func_kl(means, variances))#.view(1,-1)
             
-            curr_loss_all = curr_loss_kl + curr_loss_base+curr_loss_intensity
+            curr_loss_all = curr_loss_kl + curr_loss_base + curr_loss_intensity
             curr_loss_all.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRADIENT_CLIPPING_MAX_NORM)
             optimizer.step()
 
+            #for name, param in model.named_parameters():
+            #    print(f"Parameter Name: {name}")
+            #    print(f"Parameter Value: {param}")
+            #    print(f"Gradients: {param.grad}")
+            #    print(f"Parameter Shape: {param.shape}")
+            #    print(f"Requires Gradient: {param.requires_grad}")
+            #    print("-" * 40)
+            #return
             #logging
             loss_all += curr_loss_all.item()
             loss_base += curr_loss_base.item()
             loss_kl += curr_loss_kl.item()
             loss_intensity += curr_loss_intensity.item()
+
             # maybe need to optim user_mean, user_var separate because of torch..
             if user_lr:
                 torch.nn.utils.clip_grad_norm_(means, max_norm=GRADIENT_CLIPPING_MAX_NORM)
@@ -192,14 +208,15 @@ def train_with_negatives(model, device, dataloader,num_epochs, state_size, loss_
             
 
             negative_times = torch.FloatTensor(num_negatives).uniform_(0, max_time).to(device)
-            #all_times = [(t, False, None) for t in negative_times if t not in timestamps]# time, is positive, id of extra data
-            all_times = []
+            #all_times = []
+            all_times = [(t, False, None) for t in negative_times if t not in timestamps]# time, is positive, id of extra data
     
-            for t in negative_times:
+            #for t in negative_times:
                 # Check if `t` is within the tolerance of any timestamp
-                if torch.any(torch.abs(timestamps - t) <= 1e-4):
-                    all_times.append((t, False, None))
-            
+            #    if torch.any(torch.abs(timestamps - t) <= 1e-4):
+            #        all_times.append((t, False, None))
+
+            #print("num_negatives: ", len(all_times))
             all_times.extend([(timestamps[i], True, i) for i in range(len(timestamps))])
             all_times = sorted(all_times, key=lambda x: x[0])
 
