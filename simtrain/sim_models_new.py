@@ -860,13 +860,13 @@ class Toy_intensity_Generator(nn.Module):
         
         #self.state = torch.zeros((1,self.state_size))
 
-    def find_h(self, state, uniform_guess, interval_size=.01, max_iter=2_000):
+    def find_h(self, state, uniform_guess, interval_size=.1, max_iter=100):
         intensity = torch.zeros((1,1), requires_grad=True)
         #h = torch.zeros((1,1), requires_grad=True)# torch.tensor([EPSILON], requires_grad=True)
         target = -torch.log(uniform_guess+EPSILON)
         curr_state = state
         for i in range(max_iter):
-            curr_state = self.user_state_model(curr_state, interval_size)
+            curr_state = self.user_state_model(curr_state, interval_size, interval_time=0.05)
             intensity = intensity + (self.intensity_model(h = interval_size, 
                                 intensity=intensity, state=curr_state)*interval_size)#.clone()
             
@@ -884,7 +884,7 @@ class Toy_intensity_Generator(nn.Module):
         #h_optimized = self.binary_search(state, u)
         
         h_optimized = torch.tensor([self.find_h(state, u)])
-        print(f"u: {u} \t h: {h_optimized}")
+        #print(f"u: {u} \t h: {h_optimized}")
         return torch.flatten(h_optimized)
     
     def sample_path(self, num_samples = 10,state = None):
