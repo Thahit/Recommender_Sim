@@ -17,7 +17,7 @@ os.environ['NUMEXPR_MAX_THREADS'] = '16'
 #loss_func = nn.functional.mse_loss
 loss_func = nn.NLLLoss()
 
-def energy_score_loss(forecast_samples, observed_value, beta=1.):
+def energy_score_loss(forecast_samples, observed_value, beta=1., weight_norm=1):
     """
     Compute the energy score loss for a set of forecast samples and an observed value.
     
@@ -29,19 +29,22 @@ def energy_score_loss(forecast_samples, observed_value, beta=1.):
         torch.Tensor: The energy score loss.
     """
     N = forecast_samples.size(0)
-
+    assert N > 1
+    forecast_samples = forecast_samples.view((N, -1))
+    #print(forecast_samples)
+    #print(observed_value)
     # Compute distances between the observed value and forecast samples
     distances_to_observed = torch.pow(torch.norm(forecast_samples - observed_value, 
-                                                 dim=1), beta)
+                                                 dim=1, p = 2), beta)
     
     # Compute pairwise distances between forecast samples
     pairwise_distances = torch.pow(torch.cdist(forecast_samples, forecast_samples, p=2),
                                    beta)
-    
+    #print(pairwise_distances)
     term1 = distances_to_observed.mean() * 2
-    term2 = pairwise_distances.mean() 
-    
-    energy_score = term1 - term2
+    term2 = pairwise_distances.sum() /(N * (N-1))   # mean?
+    #print(f"term 1 {term1}, term2: {term2}")
+    energy_score = term1 - weight_norm*term2
     return energy_score
 
 def kl_divergence(mu1, sigma1, mu2, sigma2):
