@@ -16,6 +16,14 @@ def smoothclamp_0_1(x):
     x = x/2
     return x
 
+def smoothclamp(x):
+    #x = nn.functional.softplus(x)
+    #return x
+    #x= torch.as_tensor(x)
+    x = nn.functional.tanh(x/35)+1
+    x = x*35
+    return x
+
 class Base_Model(nn.Module):
     """
     A base neural network model with customizable layer widths.
@@ -65,6 +73,34 @@ class Base_Model(nn.Module):
     #    return x
 
 #______________________________________state_____________________________-
+
+class Ode_Function_linear(nn.Module):# useless
+    """
+    A neural network model specifically for ODE functions, inheriting from Base_Model.
+
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters. Ignored
+    """
+    def __init__(self, state_size: int, model_hyp: Dict):
+        super(Ode_Function_linear, self).__init__()
+        self.model = nn.Linear(state_size, state_size)
+    
+    def forward(self, time, state):
+        """
+        Forward pass for ODE functions.
+
+        Args:
+            time (torch.Tensor): Time tensor.
+            state (torch.Tensor): State tensor.
+
+        Returns:
+            torch.Tensor: Output tensor representing the derivative of the state.
+        """
+        out = self.model(state)
+        
+        return out
+
 
 class Ode_Function(Base_Model):
     """
@@ -161,7 +197,7 @@ class User_State_Model(nn.Module):
             torch.Tensor: Noisy state tensor.
         """
         if self.noise > 0:
-            state =  state + (self.noise * torch.randn(state.shape) * h)#.clone()
+            state =  state + (self.noise * torch.randn(state.shape) * h).clone()
         return state
     
     def forward_old(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
@@ -200,11 +236,11 @@ class User_State_Model(nn.Module):
         num_intervals = int(math.floor(h/interval_time))
 
         for _ in range(num_intervals):
-            state = state+(self.ode_func(interval_time, state)*interval_time)#.clone()
+            state = state+(self.ode_func(interval_time, state)*interval_time).clone()
         
         rest_interval = h%interval_time
         if MIN_INTEGRAL < rest_interval:# numerical issues
-            state = state + (self.ode_func(rest_interval, state)*rest_interval)#.clone()
+            state = state + (self.ode_func(rest_interval, state)*rest_interval).clone()
 
         state = self.add_noise(state, h)
         return state
@@ -240,7 +276,7 @@ class Conditioned_User_State_Model(nn.Module):
             torch.Tensor: Noisy state tensor.
         """
         if self.noise > 0:
-            state = state + (self.noise * torch.randn(state.shape) * h)#.clone()
+            state = state + (self.noise * torch.randn(state.shape) * h).clone()
         return state
     
     def forward_old(self, start_state: torch.Tensor, user_params: torch.Tensor, h: int, h_0: int = 0):
@@ -281,11 +317,11 @@ class Conditioned_User_State_Model(nn.Module):
         odefunc_partial = partial(self.ode_func, user_params=user_params)
 
         for _ in range(num_intervals):
-            state = state + (odefunc_partial(interval_time, state)*interval_time)#.clone()
+            state = state + (odefunc_partial(interval_time, state)*interval_time).clone()
         
         rest_interval = h%interval_time
         if MIN_INTEGRAL < rest_interval:# numerical issues
-            state = state + (odefunc_partial(rest_interval, state))#.clone()
+            state = state + (odefunc_partial(rest_interval, state)).clone()
 
         #state = self.add_noise(state, h)
         return state
@@ -377,13 +413,13 @@ class User_State_Intensity_Model(nn.Module):
         for _ in range(num_intervals):
             #state = state_model(state, h=interval_time)
             #out = out + (self.ode(y, state) *interval_time).clone()
-            out = out + (self.odefunc(interval_time, out, state, state_model) * interval_time)#.clone()
+            out = out + (self.odefunc(interval_time, out, state, state_model) * interval_time).clone()
         
         rest_interval = time.item()%interval_time
         if MIN_INTEGRAL < rest_interval:# numerical issues
             #state = state_model(state, h=rest_interval)
             #out = out + (self.ode(y, state) *rest_interval).clone()
-            out = out + (self.odefunc(interval_time, out, state, state_model) * rest_interval)#.clone()
+            out = out + (self.odefunc(interval_time, out, state, state_model) * rest_interval).clone()
 
         #needs to be >= 0   maybe also <= 1?
         #out = nn.functional.relu(out)
@@ -411,7 +447,7 @@ class User_State_Intensity_Model(nn.Module):
 
         out = odeint(odefunc_partial, initial_cond, t)[1]
         #out = nn.functional.relu(out)
-        out = torch.exp(-out)#.clone()
+        out = torch.exp(-out).clone()
         return out
 
     def forward(self, state, h, intensity):
@@ -493,11 +529,11 @@ class global_Intensity_Model(nn.Module):
         num_intervals = int(math.floor(time.item()/interval_time))
 
         for _ in range(num_intervals):
-            out = out + (self.ode_func(interval_time, out) * interval_time)#.clone()
+            out = out + (self.ode_func(interval_time, out) * interval_time).clone()
         
         rest_interval = time.item()%interval_time
         if MIN_INTEGRAL < rest_interval:# numerical issues
-            out = out + (self.ode_func(rest_interval, out) * rest_interval)#.clone()
+            out = out + (self.ode_func(rest_interval, out) * rest_interval).clone()
         #needs to be >= 0   maybe also <=1?
         #out = nn.functional.relu(out)
         #out = nn.functional.sigmoid(out)
@@ -550,8 +586,8 @@ class Intensity_Model(nn.Module):
         num_intervals = int(math.floor(time_delta.item()/interval_time))
         curr_time = start_time
         for _ in range(num_intervals):
-            user_intensity = user_intensity + (self.user_intensity_model(state, interval_time, user_intensity) * interval_time)#.clone()
-            global_intensity = global_intensity + (self.global_model(curr_time) * interval_time)#.clone()
+            user_intensity = user_intensity + (self.user_intensity_model(state, interval_time, user_intensity) * interval_time).clone()
+            global_intensity = global_intensity + (self.global_model(curr_time) * interval_time).clone()
             out_user = out_user + user_intensity
             out_global = out_global + global_intensity
             state = state_model(h=interval_time, state=state)# advance state
@@ -560,8 +596,8 @@ class Intensity_Model(nn.Module):
         #   extra step
         rest_interval = time_delta.item()%interval_time
         if MIN_INTEGRAL < rest_interval:
-            user_intensity = user_intensity + (self.user_intensity_model(state, rest_interval, user_intensity) * rest_interval)#.clone()
-            global_intensity = global_intensity + (self.global_model(curr_time) * rest_interval)#.clone()
+            user_intensity = user_intensity + (self.user_intensity_model(state, rest_interval, user_intensity) * rest_interval).clone()
+            global_intensity = global_intensity + (self.global_model(curr_time) * rest_interval).clone()
             out_user = out_user + user_intensity
             out_global = out_global + global_intensity
             #state = state_model(h=interval_time, state=state)
@@ -848,6 +884,41 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
 
 
 #______________________________________data_generator_____________________________
+
+class all_in_one_model(nn.Module):
+    def __init__(self, model_hyp: Dict, timecheat = False,noise_size:int = 10):
+        # time as input or integrate?, for now integrate
+        super(all_in_one_model, self).__init__()
+        self.state_size = model_hyp["state_size"]
+        self.noise_size = noise_size
+        self.timecheat=timecheat
+        extra=0
+        if timecheat:
+            extra =1
+        self.time_model = Base_Model(self.state_size + noise_size + extra, 1, model_hyp["time_model"]["model_hyp"])
+        self.state_model = Base_Model(self.state_size+1, self.state_size, model_hyp["state_model"]["model_hyp"])
+
+    def forward(self, state):#useless
+        time_next_clapped = self.get_time(state)
+        next_state = self.get_new_state(state, time_next_clapped)
+        return time_next_clapped, next_state
+    
+    def get_time(self, state, global_time=None):
+        noise = torch.rand((1, self.noise_size), requires_grad=True)
+        #print(f"noise: {noise}")
+        if self.timecheat:
+            global_time = torch.tensor([[global_time]])
+            state_and_noise = torch.cat((state, noise, global_time), dim=1)
+        else:
+            state_and_noise = torch.cat((state, noise), dim=1)
+
+        time_next = self.time_model(state_and_noise)
+        return time_next#smoothclamp(time_next) #torch.clamp(time_next, 0, 70)#smoothclamp(time_next)
+
+    def get_new_state(self, state, time_next_clapped):
+        time_and_state = torch.cat((state, time_next_clapped), dim=1)
+        return self.state_model(time_and_state)
+
 class Toy_intensity_Generator(nn.Module):
     def __init__(self, hyperparameter_dict: Dict):
         super(Toy_intensity_Generator, self).__init__()
@@ -860,7 +931,7 @@ class Toy_intensity_Generator(nn.Module):
         
         #self.state = torch.zeros((1,self.state_size))
 
-    def find_h(self, state, uniform_guess, interval_size=.1, max_iter=100):
+    def find_h(self, state, uniform_guess, interval_size=.1, max_iter=250):
         intensity = torch.zeros((1,1), requires_grad=True)
         #h = torch.zeros((1,1), requires_grad=True)# torch.tensor([EPSILON], requires_grad=True)
         target = -torch.log(uniform_guess+EPSILON)
@@ -868,7 +939,7 @@ class Toy_intensity_Generator(nn.Module):
         for i in range(max_iter):
             curr_state = self.user_state_model(curr_state, interval_size, interval_time=0.05)
             intensity = intensity + (self.intensity_model(h = interval_size, 
-                                intensity=intensity, state=curr_state)*interval_size)#.clone()
+                                intensity=intensity, state=curr_state)*interval_size).clone()
             
             if intensity > target:
                 return interval_size * i
