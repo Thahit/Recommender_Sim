@@ -4,6 +4,7 @@ import torch.nn as nn
 from torchdiffeq import odeint
 from typing import Dict
 import math
+import numpy as np
 
 ODE_GRADIENT_CLIP = 1e4
 MIN_INTEGRAL = 1e-5
@@ -24,6 +25,46 @@ def smoothclamp(x):
     x = x*35
     return x
 
+
+class SignWaveEmbedding(nn.Module):
+    def __init__(self, embedding_dim, max_freq=1):
+        """
+        Initialize the SignWaveEmbedding module.
+        
+        Args:
+            num_frequencies (int): Number of different frequencies to use.
+            embedding_dim (int): Dimension of the resulting embedding vector.
+        """
+        assert embedding_dim %2==0
+        super(SignWaveEmbedding, self).__init__()
+        self.num_frequencies = embedding_dim//2
+        self.embedding_dim = embedding_dim
+
+        # Create frequency values. Use logarithmic spacing to cover a range of scales.
+        self.frequencies = torch.logspace(-4, np.log10(max_freq), self.num_frequencies, base=2, dtype=torch.float32)
+
+    def forward(self, x):
+        """
+        Generate the sign wave embeddings for the input scalar.
+        
+        Args:
+            x (torch.Tensor): Input tensor of scalars with shape (batch_size,).
+        
+        Returns:
+            torch.Tensor: Embedding tensor with shape (batch_size, embedding_dim).
+        """
+        #x = x.unsqueeze(1)  # Add dimension for broadcasting
+
+        # Compute the embedding vector
+        sin_embeddings = torch.sin(x * self.frequencies)
+        cos_embeddings = torch.cos(x * self.frequencies)
+
+        # Concatenate sine and cosine embeddings
+        embeddings = torch.cat([sin_embeddings, cos_embeddings], dim=-1)
+
+        return embeddings
+
+#_________________________________________base_____________________________
 class Base_Model(nn.Module):
     """
     A base neural network model with customizable layer widths.
@@ -45,7 +86,7 @@ class Base_Model(nn.Module):
         layers.append(nn.Linear(last_w, ndims_out))
         self.model = nn.Sequential(*layers)
 
-        self._initialize_weights()
+        #self._initialize_weights()
     
     def _initialize_weights(self):
         """
@@ -143,7 +184,8 @@ class Ode_Function_Conditioned(Base_Model):
     """
     def __init__(self, state_size: int, user_params_size: int, model_hyp: Dict):
         # time as input or integrate?, for now integrate
-        super(Ode_Function_Conditioned, self).__init__(state_size + user_params_size, state_size, model_hyp)
+        super(Ode_Function_Conditioned, self).__init__(state_size + user_params_size, 
+                                state_size, model_hyp)
     
     def forward(self, time, state, user_params):
         """
@@ -200,7 +242,7 @@ class User_State_Model(nn.Module):
             state =  state + (self.noise * torch.randn(state.shape) * h).clone()
         return state
     
-    def forward_old(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
+    def forward_old2(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
         """
         Evolve the state from time h_0 to h using ODE integration.
 
@@ -357,6 +399,33 @@ class User_State_Intensity_Model_ODE(Base_Model):
         
         return x
 
+
+class User_State_Intensity_Model_simple(Base_Model):
+    """
+    A neural network model for computing the intensity function of state changes in an ODE.
+
+    Args:
+        state_size (int): Size of the state vector.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
+    def __init__(self, state_size: int, model_hyp: Dict):
+        super(User_State_Intensity_Model_simple, self).__init__(state_size, 1, model_hyp)
+    
+    def forward(self,  state):# maybe can depend on time too
+        """
+        Compute the intensity based on the state.
+
+        Args:
+            state (torch.Tensor): State tensor.
+
+        Returns:
+            torch.Tensor: Intensity tensor.
+        """
+        #x = torch.cat((state, t), dim=1)
+        x = self.model(state)
+        x = nn.functional.softplus(x)
+        #x = nn.functional.relu(x)
+        return x
 
 class User_State_Intensity_Model(nn.Module):
     """
@@ -586,7 +655,8 @@ class Intensity_Model(nn.Module):
         num_intervals = int(math.floor(time_delta.item()/interval_time))
         curr_time = start_time
         for _ in range(num_intervals):
-            user_intensity = user_intensity + (self.user_intensity_model(state, interval_time, user_intensity) * interval_time).clone()
+            user_intensity = user_intensity + (self.user_intensity_model(state, 
+                interval_time, user_intensity) * interval_time).clone()
             global_intensity = global_intensity + (self.global_model(curr_time) * interval_time).clone()
             out_user = out_user + user_intensity
             out_global = out_global + global_intensity
@@ -975,6 +1045,78 @@ class Toy_intensity_Generator(nn.Module):
     def evolve_state(self, state, delta):
         return self.user_state_model(state=state, h=delta)
 
+class Toy_intensity_Comparer(nn.Module):
+    def __init__(self, hyperparameter_dict: Dict):
+        super(Toy_intensity_Comparer, self).__init__()
+        self.time_size= hyperparameter_dict["time_embedding_size"]
+        self.max_freq= hyperparameter_dict["max_freq"]
+        self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
+        self.state_size = hyperparameter_dict["state_size"]
+        self.user_state_model = Base_Model(self.state_size+self.time_size+1, self.state_size,
+                    hyperparameter_dict["state_model"]["model_hyp"],
+        #            noise=hyperparameter_dict["state_model"].get("noise", 0)
+            )
+        self.intensity_model = User_State_Intensity_Model_simple(self.state_size, 
+            hyperparameter_dict["intensity_model"]["model_hyp"])
+        
+        #self.all_in_one = Base_Model(1, 1,
+        #            hyperparameter_dict["state_model"]["model_hyp"],
+        #            noise=hyperparameter_dict["state_model"].get("noise", 0)
+        #    )
+        #self.state = torch.zeros((1,self.state_size))
+
+
+    def find_h(self, state, uniform_guess, interval_size=.1, max_iter=250):
+        intensity = torch.zeros((1,1), requires_grad=True)
+        #h = torch.zeros((1,1), requires_grad=True)# torch.tensor([EPSILON], requires_grad=True)
+        target = -torch.log(uniform_guess+EPSILON)
+        curr_state = state
+        for i in range(max_iter):
+            curr_state = self.user_state_model(curr_state, interval_size, interval_time=0.05)
+            intensity = intensity + (self.intensity_model(h = interval_size, 
+                                intensity=intensity, state=curr_state)*interval_size).clone()
+            
+            if intensity > target:
+                return interval_size * i
+        return interval_size * max_iter
+
+    def sample_one(self, state):
+        u = torch.rand(1, requires_grad=False)# theoretically one should also do -u + 1
+        
+        h_optimized = torch.tensor([self.find_h(state, u)])
+        #print(f"u: {u} \t h: {h_optimized}")
+        return torch.flatten(h_optimized)
+    
+    def sample_path(self, num_samples = 10, state = None, ground_truth_to_align=None):
+        if state is None:
+            state = torch.zeros((1,self.state_size))
+        path = []
+        curr_time = 0
+        # need integral over all and afterwards over points, 
+        # -> should do checkpoints to save time
+        with torch.no_grad():
+            for _ in range(num_samples):
+                #integrate ...
+                pass
+        path = torch.stack(path)
+        return path.detach().numpy()
+    
+    def evolve_state(self, state, delta):
+        time_emb=self.embed(delta)
+  
+        input = torch.cat((state, time_emb, delta), dim=1)
+        return self.user_state_model(input)
+    
+    def get_intensity(self, state):# might want to make this time dependent
+        return self.intensity_model(state) 
+    
+    def forward(self, state, times):
+        #input = torch.cat((state, times), dim=1)
+        #return self.all_in_one(times)
+        new_state = self.evolve_state(state, times)
+        
+        freq =  self.get_intensity(new_state)
+        return freq
 
 if __name__ == "__main__2":
     # test code
