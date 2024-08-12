@@ -17,6 +17,53 @@ os.environ['NUMEXPR_MAX_THREADS'] = '16'
 #loss_func = nn.functional.mse_loss
 loss_func = nn.NLLLoss()
 
+def simulate_single_forced_function_approx(model, path, state_size,
+                                           timecheat=False, num_tries=20):
+    
+    last_t = 0
+    state = torch.zeros((1, state_size))
+    results = []
+    with torch.no_grad():
+        for timestep in path:
+            current_pred = []
+            for _ in range(num_tries):
+                if timecheat:
+                    next_time=model.get_time(state, last_t)
+                else:
+                    next_time=model.get_time(state)
+                #print(f"next_time: {next_time}, next_state: {next_state}")
+                current_pred.append(last_t + next_time[0])
+            current_pred = torch.stack(current_pred)
+            results.append(torch.mean(current_pred))
+            last_t = timestep
+            state = model.get_new_state(state, torch.tensor([[timestep]]))
+    
+    return results
+
+def simulate_single_function_approx(model, state_size, num_events=10, timecheat=False, num_tries=20):
+    
+    last_t = 0
+    state = torch.zeros((1, state_size))
+    results = []
+    with torch.no_grad():
+        for _ in range(num_events):
+            current_pred = []
+            for _ in range(num_tries):
+                if timecheat:
+                    next_time=model.get_time(state, last_t)
+                else:
+                    next_time=model.get_time(state)
+                
+                current_pred.append(last_t + next_time[0])
+            current_pred = torch.stack(current_pred)
+            selected = torch.mean(current_pred)
+            results.append(selected)
+            last_t = selected
+            state = model.get_new_state(state, torch.tensor([[selected]]))
+    
+    return results
+
+
 def weighted_mse_loss(prediction, target, weight_pos=1):
     weights = torch.ones_like(target)
 

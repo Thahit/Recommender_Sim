@@ -4,7 +4,8 @@ from tqdm import tqdm
 
 GRADIENT_CLIPPING_MAX_NORM = 2.
 
-def train_1_path_positive(model, user_state, timestamps, items, labels, loss_func, num_classes, 
+def train_1_path_positive(model, user_state, timestamps, items, labels, loss_func, 
+        num_classes, 
                  intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True,
                  conditioned=False):
     ''' expects batchsize of 1
@@ -55,7 +56,8 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
     
     return loss_base, loss_intensity
 
-def train_1_path_positive_and_negative(model, user_state, timestamps, items, labels, loss_func, num_classes, 
+def train_1_path_positive_and_negative(model, user_state, timestamps, items, labels, 
+            loss_func, num_classes, 
                  intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True,
                  positive_examples_weight=1, conditioned=False):
     ''' expects batchsize of 1
@@ -111,7 +113,8 @@ def train_1_path_positive_and_negative(model, user_state, timestamps, items, lab
     return loss_base, loss_intensity
 
 
-def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func_kl, optimizer, num_classes, 
+def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func_kl, 
+          optimizer, num_classes, 
             intensity_loss_func, logger, max_time,lr_scheduler, warmup_scheduler,
             kl_weight = 1, user_lr = None, log_step_size = 1, warmup_period=100, conditioned=False):
     model.to(device)
@@ -190,7 +193,8 @@ def train(model, device, dataloader,num_epochs, state_size, loss_func, loss_func
     logger(loss_all, loss_base, loss_kl, loss_intensity)# log at the end
 
 
-def train_with_negatives(model, device, dataloader,num_epochs, state_size, loss_func, 
+def train_with_negatives(model, device, dataloader,num_epochs, state_size, 
+        loss_func, 
             loss_func_kl, optimizer, num_classes, 
             intensity_loss_func, logger, max_time, lr_scheduler, warmup_scheduler,
             kl_weight=1, user_lr=None, log_step_size=1, warmup_period=100,
@@ -283,7 +287,7 @@ def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, sta
         
         for batch in dataloader:
             timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
-            frequencies = batch['frequency']
+            frequencies = batch['frequency'].unsqueeze(1)
             state = torch.zeros((len(timesteps), state_size))
             optimizer.zero_grad()
             
@@ -315,7 +319,7 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
                                  lr_scheduler=None, warmup_period=None, warmup_scheduler=None,
                                  num_epochs=100, 
                                  num_tries=20, timecheat=False, loss_print_interval=1):
-    
+    results =  []
     for iter in tqdm(range(num_epochs)):
         last_t = 0
         state = torch.zeros((1, state_size))
@@ -343,7 +347,9 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
             state = model.get_new_state(state, timestep-last_t)
             last_t = timestep
         if iter % loss_print_interval == 0:
-            print(f"epch: {iter} loss_sum: {loss :.4f}")
+            progress_str = f"epoch: {iter} loss_sum: {loss :.4f}"
+            print(progress_str)
+            results.append((iter, loss))
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
         optimizer.step()
@@ -362,5 +368,8 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
                         lr_scheduler.step()
         optimizer.zero_grad()
 
-    print(f"epch: {iter} loss_sum: {loss :.4f}")
+    progress_str = f"epoch: {iter} loss_sum: {loss :.4f}"
+    print(progress_str)
+    results.append((iter, loss))
+    return results
     
