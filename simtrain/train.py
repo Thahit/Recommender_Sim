@@ -274,4 +274,39 @@ def train_with_negatives(model, device, dataloader,num_epochs, state_size, loss_
     logger(loss_all, loss_base, loss_kl, loss_intensity)# log at the end
 
 
+def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, state_size, 
+            lr_scheduler, warmup_period,
+            num_epochs=100, loss_print_interval=1, print_grad=False):
+    
+    for iter in tqdm(range(num_epochs)):
+        loss_sum = 0.0
+        
+        for batch in dataloader:
+            timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
+            frequencies = batch['frequency']
+            state = torch.zeros((len(timesteps), state_size))
+            optimizer.zero_grad()
+            
+            # Forward pass
+            outputs = model(state, timesteps)
+            
+            loss = criterion(outputs, frequencies)  # Remove extra dimension from output
+            loss.backward()
+            loss_sum += loss.item()
+            #print(f"loss: {loss} \tfrequencies: {frequencies} \n predicted: {outputs}")
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
+            optimizer.step()    
+
+            with warmup_scheduler.dampening():
+                if warmup_scheduler.last_step + 1 >= warmup_period:
+                    lr_scheduler.step()
+        if iter % loss_print_interval == 0:
+            print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
+            if print_grad:
+                for name, param in model.named_parameters():
+                    print(f"Parameter Name: {name}")
+                    print(f"Gradients: {param.grad}")
+            print(f"frequencies: {frequencies} \n predicted: {outputs}, time: {timesteps}")
+            
+    print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
 

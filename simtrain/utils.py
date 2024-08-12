@@ -17,6 +17,15 @@ os.environ['NUMEXPR_MAX_THREADS'] = '16'
 #loss_func = nn.functional.mse_loss
 loss_func = nn.NLLLoss()
 
+def weighted_mse_loss(prediction, target, weight_pos=1):
+    weights = torch.ones_like(target)
+
+    # Create a tensor of additional values based on the condition
+    weights = torch.where(target > 0, torch.tensor(weight_pos), weights)
+
+    return torch.sum(weights * (prediction - target) ** 2)
+
+
 def energy_score_loss(forecast_samples, observed_value, beta=1., weight_norm=1):
     """
     Compute the energy score loss for a set of forecast samples and an observed value.
