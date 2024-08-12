@@ -310,3 +310,57 @@ def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, sta
             
     print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
 
+
+def train_single_function_approx(model, path, scoring_func,optimizer, state_size, 
+                                 lr_scheduler=None, warmup_period=None, warmup_scheduler=None,
+                                 num_epochs=100, 
+                                 num_tries=20, timecheat=False, loss_print_interval=1):
+    
+    for iter in tqdm(range(num_epochs)):
+        last_t = 0
+        state = torch.zeros((1, state_size))
+        loss = 0.
+
+        for timestep in path:
+            current_pred = []
+            for _ in range(num_tries):
+                if timecheat:
+                    next_time = model.get_time(state, last_t)
+                else:
+                    next_time = model.get_time(state)
+                #print(f"next_time: {next_time}, next_state: {next_state}")
+                current_pred.append(last_t + next_time)
+            current_pred = torch.stack(current_pred)
+            
+            timestep = torch.Tensor([[timestep]])
+            #print(torch.mean(current_pred))
+            #loss = loss + mse_loss(next_time, timestep)
+            score_loss = scoring_func(current_pred, timestep)
+            if score_loss== 0:
+                score_loss+=1e-15
+            loss += (score_loss)# + thing should be useless
+
+            state = model.get_new_state(state, timestep-last_t)
+            last_t = timestep
+        if iter % loss_print_interval == 0:
+            print(f"epch: {iter} loss_sum: {loss :.4f}")
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
+        optimizer.step()
+
+        #for name, param in model.named_parameters():
+        #    print(f"Parameter Name: {name}")
+        #    print(f"Gradients: {param.grad}")
+        #    print(f"Parameter Value: {param}")
+        #    print(f"Parameter Shape: {param.shape}")
+        #    print(f"Requires Gradient: {param.requires_grad}")
+        #    print("-" * 40)
+        #return
+        if not (warmup_scheduler is None):
+            with warmup_scheduler.dampening():
+                    if warmup_scheduler.last_step + 1 >= warmup_period:
+                        lr_scheduler.step()
+        optimizer.zero_grad()
+
+    print(f"epch: {iter} loss_sum: {loss :.4f}")
+    
