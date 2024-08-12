@@ -983,6 +983,7 @@ class all_in_one_model(nn.Module):
             state_and_noise = torch.cat((state, noise), dim=1)
 
         time_next = self.time_model(state_and_noise)
+        time_next = nn.functional.softplus(time_next)
         return time_next#smoothclamp(time_next) #torch.clamp(time_next, 0, 70)#smoothclamp(time_next)
 
     def get_new_state(self, state, time_next_clapped):
@@ -1048,14 +1049,20 @@ class Toy_intensity_Generator(nn.Module):
 class Toy_intensity_Comparer(nn.Module):
     def __init__(self, hyperparameter_dict: Dict):
         super(Toy_intensity_Comparer, self).__init__()
-        self.time_size= hyperparameter_dict["time_embedding_size"]
-        self.max_freq= hyperparameter_dict["max_freq"]
-        self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
+
         self.state_size = hyperparameter_dict["state_size"]
-        self.user_state_model = Base_Model(self.state_size+self.time_size+1, self.state_size,
-                    hyperparameter_dict["state_model"]["model_hyp"],
-        #            noise=hyperparameter_dict["state_model"].get("noise", 0)
-            )
+        self.time_size= hyperparameter_dict.get("time_embedding_size",0)
+        self.max_freq= hyperparameter_dict.get("max_freq",70)
+        self.encode_time = self.time_size>0
+        if self.encode_time:
+            self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
+            self.user_state_model = Base_Model(self.state_size+self.time_size+1, self.state_size,
+                        hyperparameter_dict["state_model"]["model_hyp"],
+                )
+        else:
+            self.user_state_model = Base_Model(self.state_size+1, self.state_size,
+                        hyperparameter_dict["state_model"]["model_hyp"],
+                )
         self.intensity_model = User_State_Intensity_Model_simple(self.state_size, 
             hyperparameter_dict["intensity_model"]["model_hyp"])
         
@@ -1102,9 +1109,11 @@ class Toy_intensity_Comparer(nn.Module):
         return path.detach().numpy()
     
     def evolve_state(self, state, delta):
-        time_emb=self.embed(delta)
-  
-        input = torch.cat((state, time_emb, delta), dim=1)
+        if self.encode_time:
+            time_emb=self.embed(delta)
+            input = torch.cat((state, time_emb, delta), dim=1)
+        else:
+            input = torch.cat((state, delta), dim=1)
         return self.user_state_model(input)
     
     def get_intensity(self, state):# might want to make this time dependent
