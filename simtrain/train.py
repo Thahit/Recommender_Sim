@@ -56,6 +56,7 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
     
     return loss_base, loss_intensity
 
+
 def train_1_path_positive_and_negative(model, user_state, timestamps, items, labels, 
             loss_func, num_classes, 
                  intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True,
@@ -281,7 +282,7 @@ def train_with_negatives(model, device, dataloader,num_epochs, state_size,
 def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, state_size, 
             lr_scheduler, warmup_period,
             num_epochs=100, loss_print_interval=1, print_grad=False):
-    
+    results = []
     for iter in tqdm(range(num_epochs)):
         loss_sum = 0.0
         
@@ -306,13 +307,16 @@ def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, sta
                     lr_scheduler.step()
         if iter % loss_print_interval == 0:
             print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
+            results.append((iter, loss_sum))
             if print_grad:
                 for name, param in model.named_parameters():
                     print(f"Parameter Name: {name}")
                     print(f"Gradients: {param.grad}")
-            print(f"frequencies: {frequencies} \n predicted: {outputs}, time: {timesteps}")
+            #print(f"frequencies: {frequencies} \n predicted: {outputs}, time: {timesteps}")
             
     print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
+    results.append((iter, loss_sum))
+    return results
 
 
 def train_single_function_approx(model, path, scoring_func,optimizer, state_size, 
@@ -372,4 +376,4 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
     print(progress_str)
     results.append((iter, loss))
     return results
-    
+
