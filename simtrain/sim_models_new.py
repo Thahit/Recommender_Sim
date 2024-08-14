@@ -215,7 +215,7 @@ class User_State_Model(nn.Module):
         model_hyp (Dict): Dictionary containing model hyperparameters for the ODE function.
         noise (int): scaling of the noise added.
     """
-    def __init__(self, state_size: int, model_hyp: Dict, noise):
+    def __init__(self, state_size: int, model_hyp: Dict):
         super(User_State_Model, self).__init__()
 
         # time as input or integrate?, for now integrate
@@ -224,7 +224,7 @@ class User_State_Model(nn.Module):
         # last layer is linear= no activation
         self.ode_func = Ode_Function(state_size, model_hyp)
 
-        self.noise = noise
+        self.noise = model_hyp.get("noise", 0)
         assert self.noise >= 0
     
     def add_noise(self, state, h):
@@ -263,7 +263,7 @@ class User_State_Model(nn.Module):
         state = self.add_noise(state, h)
         return state
     
-    def forward(self, state: torch.Tensor, h: int, interval_time=.01):# discrete
+    def forward(self, state: torch.Tensor, h: int, interval_time=.1):# discrete
         """
         Evaluate the integral of the state function over discrete time intervals.
 
@@ -816,8 +816,7 @@ class User_simmulation_Model(nn.Module):
         #init all sub-modules
 
         self.state_model = User_State_Model(self.state_size, 
-                                            hyperparameter_dict["state_model"]["model_hyp"],
-                                            noise=hyperparameter_dict["state_model"].get("noise", 0))
+                                            hyperparameter_dict["state_model"]["model_hyp"])
 
         self.intensity_model = Intensity_Model(self.state_size, time_size=self.time_size,
                                                model_hyp=hyperparameter_dict["intensity_model"]["model_hyp"])
@@ -909,8 +908,7 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
         super(Conditioned_User_simmulation_Model, self).__init__(hyperparameter_dict)
 
         self.state_model = Conditioned_User_State_Model(self.state_size, hyperparameter_dict["user_params_size"],
-                                            hyperparameter_dict["state_model"]["model_hyp"],
-                                            noise=hyperparameter_dict["state_model"].get("noise", 0))
+                                            hyperparameter_dict["state_model"]["model_hyp"])
 
     
     def init_state(self, state, user_params):
@@ -995,8 +993,7 @@ class Toy_intensity_Generator(nn.Module):
         super(Toy_intensity_Generator, self).__init__()
         self.state_size = hyperparameter_dict["state_size"]
         self.user_state_model = User_State_Model(self.state_size, 
-                    hyperparameter_dict["state_model"]["model_hyp"],
-                    noise=hyperparameter_dict["state_model"].get("noise", 0))
+                    hyperparameter_dict["state_model"]["model_hyp"])
         self.intensity_model = User_State_Intensity_Model(self.state_size, 
             hyperparameter_dict["intensity_model"]["model_hyp"])
         
@@ -1053,16 +1050,26 @@ class Toy_intensity_Comparer(nn.Module):
         self.state_size = hyperparameter_dict["state_size"]
         self.time_size= hyperparameter_dict.get("time_embedding_size",0)
         self.max_freq= hyperparameter_dict.get("max_freq",70)
-        self.encode_time = self.time_size>0
-        if self.encode_time:
-            self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
-            self.user_state_model = Base_Model(self.state_size+self.time_size+1, self.state_size,
+        self.encode_time = self.time_size > 0
+
+        self.state_model_type = hyperparameter_dict["state_model_type"]
+        if self.state_model_type == "simple":
+            if self.encode_time:
+                self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
+                self.user_state_model = Base_Model(self.state_size+self.time_size+1, self.state_size,
                         hyperparameter_dict["state_model"]["model_hyp"],
-                )
+                    )
+            else:
+                self.user_state_model = Base_Model(self.state_size+1, self.state_size,
+                        hyperparameter_dict["state_model"]["model_hyp"],
+                    )
+        elif self.state_model_type == "ode":
+            self.user_state_model = User_State_Model(self.state_size, 
+                hyperparameter_dict["state_model"]["model_hyp"],)
         else:
-            self.user_state_model = Base_Model(self.state_size+1, self.state_size,
-                        hyperparameter_dict["state_model"]["model_hyp"],
-                )
+            raise ValueError
+        
+        
         self.intensity_model = User_State_Intensity_Model_simple(self.state_size, 
             hyperparameter_dict["intensity_model"]["model_hyp"])
         
@@ -1109,6 +1116,8 @@ class Toy_intensity_Comparer(nn.Module):
         return path.detach().numpy()
     
     def evolve_state(self, state, delta):
+        if self.state_model_type != "simple":
+            return self.user_state_model(state, delta) 
         if self.encode_time:
             time_emb=self.embed(delta)
             input = torch.cat((state, time_emb, delta), dim=1)
