@@ -279,46 +279,6 @@ def train_with_negatives(model, device, dataloader,num_epochs, state_size,
     logger(loss_all, loss_base, loss_kl, loss_intensity)# log at the end
 
 
-def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, state_size, 
-            lr_scheduler, warmup_period,
-            num_epochs=100, loss_print_interval=1, print_grad=False):
-    results = []
-    for iter in tqdm(range(num_epochs)):
-        loss_sum = 0.0
-        
-        for batch in dataloader:
-            timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
-            frequencies = batch['frequency'].unsqueeze(1)
-            state = torch.zeros((len(timesteps), state_size))
-            optimizer.zero_grad()
-            
-            # Forward pass
-            outputs = model(state, timesteps)
-            
-            loss = criterion(outputs, frequencies)  # Remove extra dimension from output
-            loss.backward()
-            loss_sum += loss.item()
-            #print(f"loss: {loss} \tfrequencies: {frequencies} \n predicted: {outputs}")
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
-            optimizer.step()    
-
-            with warmup_scheduler.dampening():
-                if warmup_scheduler.last_step + 1 >= warmup_period:
-                    lr_scheduler.step()
-        if iter % loss_print_interval == 0:
-            print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
-            results.append((iter, loss_sum))
-            if print_grad:
-                for name, param in model.named_parameters():
-                    print(f"Parameter Name: {name}")
-                    print(f"Gradients: {param.grad}")
-            #print(f"frequencies: {frequencies} \n predicted: {outputs}, time: {timesteps}")
-            
-    print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
-    results.append((iter, loss_sum))
-    return results
-
-
 def train_single_function_approx(model, path, scoring_func,optimizer, state_size, 
                                  lr_scheduler=None, warmup_period=None, warmup_scheduler=None,
                                  num_epochs=100, 
@@ -375,5 +335,115 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
     progress_str = f"epoch: {iter} loss_sum: {loss :.4f}"
     print(progress_str)
     results.append((iter, loss))
+    return results
+
+
+def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, state_size, 
+            lr_scheduler, warmup_period,
+            num_epochs=100, loss_print_interval=1, print_grad=False):
+    results = []
+    for iter in tqdm(range(num_epochs)):
+        loss_sum = 0.0
+        
+        for batch in dataloader:
+            timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
+            frequencies = batch['frequency'].unsqueeze(1)
+            state = torch.zeros((len(timesteps), state_size))
+            optimizer.zero_grad()
+            
+            # Forward pass
+            outputs = model(state, timesteps)
+            
+            loss = criterion(outputs, frequencies)  # Remove extra dimension from output
+            loss.backward()
+            loss_sum += loss.item()
+            #print(f"loss: {loss} \tfrequencies: {frequencies} \n predicted: {outputs}")
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.)
+            optimizer.step()    
+
+            with warmup_scheduler.dampening():
+                if warmup_scheduler.last_step + 1 >= warmup_period:
+                    lr_scheduler.step()
+        if iter % loss_print_interval == 0:
+            print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
+            results.append((iter, loss_sum))
+            if print_grad:
+                for name, param in model.named_parameters():
+                    print(f"Parameter Name: {name}")
+                    print(f"Gradients: {param.grad}")
+            #print(f"frequencies: {frequencies} \n predicted: {outputs}, time: {timesteps}")
+            
+    print(f"epch: {iter} loss_sum: {loss_sum :.4f}")
+    results.append((iter, loss_sum))
+    return results
+
+
+def train_density_multiple_variational(model, dataloader_list, criterion, optimizer, warmup_scheduler, 
+            state_size, device,
+            lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
+            num_epochs=100, loss_print_interval=1, print_grad=False,
+            user_lr_decay=1):
+    results = []
+    for iter in tqdm(range(num_epochs)):
+        loss_sum_all = 0.0
+        loss_sum_freq = 0.0
+        loss_sum_kl = .0
+        #num_updates = 0
+        for i in range(len(dataloader_list)):# not the nicest way to do things
+            dataloader, variational_means, variational_logvar = dataloader_list[i]
+            for batch in dataloader:
+                timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
+                frequencies = batch['frequency'].unsqueeze(1)
+                variational_means, variational_logvar = torch.tensor(variational_means, 
+                    requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
+                variances = torch.exp(variational_logvar)
+                state = variational_means + variances*torch.randn((len(timesteps), state_size))
+                
+                optimizer.zero_grad()
+                
+                # Forward pass
+                outputs = model(state, timesteps)
+                
+                loss_freq = criterion(outputs, frequencies)  # Remove extra dimension from output
+
+                curr_loss_kl = kl_weight * torch.sum(loss_func_kl(variational_means, variances))
+                
+                loss = loss_freq + curr_loss_kl
+                loss.backward()
+                loss_sum_all += loss.item()
+                loss_sum_freq += loss_freq.item()
+                loss_sum_kl += curr_loss_kl.item()
+                #print(f"loss: {loss} \tfrequencies: {frequencies} \n predicted: {outputs}")
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRADIENT_CLIPPING_MAX_NORM)
+                optimizer.step()    
+
+                # update vriational parameters
+                torch.nn.utils.clip_grad_norm_(variational_means, max_norm=GRADIENT_CLIPPING_MAX_NORM)
+                torch.nn.utils.clip_grad_norm_(variational_logvar, max_norm=GRADIENT_CLIPPING_MAX_NORM)
+                with torch.no_grad():
+                    variational_means -= user_lr * variational_means.grad
+                    variational_logvar -= user_lr * variational_logvar.grad  
+                #print(means)
+                #means.grad.zero_()
+                #logvar.grad.zero_()
+                dataloader_list[i][1] = variational_means.detach().tolist()
+                dataloader_list[i][2] = variational_logvar.detach().tolist()
+
+                with warmup_scheduler.dampening():
+                    #num_updates+=1
+                    if warmup_scheduler.last_step + 1 >= warmup_period:
+                        lr_scheduler.step()
+        #print(num_updates)
+        if iter % loss_print_interval == 0:
+            print(f"epch: {iter} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
+            results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl))
+            if print_grad:
+                for name, param in model.named_parameters():
+                    print(f"Parameter Name: {name}")
+                    print(f"Gradients: {param.grad}")
+        user_lr *= user_lr_decay # lower variational lr,  fine for it to reach 0
+            
+    print(f"epch: {iter} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
+    results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl))
     return results
 
