@@ -435,7 +435,7 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
                         lr_scheduler.step()
         #print(num_updates)
         if iter % loss_print_interval == 0:
-            print(f"epch: {iter} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
+            print(f"epoch: {iter+1} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
             results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl))
             if print_grad:
                 for name, param in model.named_parameters():
@@ -443,7 +443,7 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
                     print(f"Gradients: {param.grad}")
         user_lr *= user_lr_decay # lower variational lr,  fine for it to reach 0
             
-    print(f"epch: {iter} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
+    print(f"epoch: {iter+1} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
     results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl))
     return results
 
