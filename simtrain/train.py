@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+import random
 
 GRADIENT_CLIPPING_MAX_NORM = 2.
 
@@ -390,6 +391,7 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
         loss_sum_kl = .0
         #num_updates = 0
         for i in range(len(dataloader_list)):# not the nicest way to do things
+            random.shuffle(dataloader_list)
             dataloader, variational_means, variational_logvar = dataloader_list[i]
             for batch in dataloader:
                 timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
