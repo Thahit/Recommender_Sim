@@ -339,6 +339,101 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
     return results
 
 
+def train_function_approx_multiple_variational(model, path_list, scoring_func,optimizer, state_size, 
+        device, loss_func_kl,
+        lr_scheduler=None, warmup_period=None, warmup_scheduler=None,
+        num_epochs=100, kl_weight=1, user_lr=.01, user_lr_decay=0.995,
+        num_tries=20, timecheat=False, loss_print_interval=1):
+    results =  []
+    for iter in tqdm(range(num_epochs)):
+        
+        loss_all = 0.
+        loss_samples = 0.
+        loss_kl = 0.
+        #num_steps = 0
+        random.shuffle(path_list)
+        for datapoint_idx in range(len(path_list)):
+            loss_samples_curr = 0.
+            loss_kl_curr = 0.
+
+            path, variational_means, variational_logvar = path_list[datapoint_idx]
+            variational_means, variational_logvar = torch.tensor(variational_means, 
+                    requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
+            
+            last_t = 0
+            variances = torch.exp(variational_logvar)
+            state = variational_means + variances*torch.randn((1, state_size))
+
+            for timestep in path:
+                current_pred = []
+                for _ in range(num_tries):
+                    if timecheat:
+                        next_time = model.get_time(state, last_t)
+                    else:
+                        next_time = model.get_time(state)
+                    #print(f"next_time: {next_time}, next_state: {next_state}")
+                    current_pred.append(last_t + next_time)
+                current_pred = torch.stack(current_pred)
+                
+                timestep = torch.Tensor([[timestep]])
+
+                score_loss = scoring_func(current_pred, timestep)
+                #if score_loss== 0:
+                #    score_loss+=1e-15
+                loss_samples_curr += (score_loss)# + thing should be useless
+
+                state = model.get_new_state(state, timestep-last_t)
+                last_t = timestep
+            
+            loss_kl_curr = kl_weight * torch.sum(loss_func_kl(variational_means, variances))
+
+            loss = loss_samples_curr + loss_kl_curr
+            loss.backward()
+            loss_all += loss.item()
+            loss_samples += loss_samples_curr.item()
+            loss_kl += loss_kl_curr.item()
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRADIENT_CLIPPING_MAX_NORM)
+            optimizer.step()
+            if not (warmup_scheduler is None):
+                with warmup_scheduler.dampening():
+                        if warmup_scheduler.last_step + 1 >= warmup_period:
+                            lr_scheduler.step()
+                #num_steps+=1
+        
+            # optimize variational
+            torch.nn.utils.clip_grad_norm_(variational_means, max_norm=GRADIENT_CLIPPING_MAX_NORM)
+            torch.nn.utils.clip_grad_norm_(variational_logvar, max_norm=GRADIENT_CLIPPING_MAX_NORM)
+            with torch.no_grad():
+                variational_means -= user_lr * variational_means.grad
+                variational_logvar -= user_lr * variational_logvar.grad  
+                #print(means)
+                #means.grad.zero_()
+                #logvar.grad.zero_()
+                path_list[datapoint_idx][1] = variational_means.detach().tolist()
+                path_list[datapoint_idx][2] = variational_logvar.detach().tolist()
+        
+            optimizer.zero_grad()
+        #print(num_steps)
+        if iter % loss_print_interval == 0:
+            print(f"epoch: {iter+1} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}")
+            results.append((iter, loss_all, loss_samples, loss_kl))
+
+            #for name, param in model.named_parameters():
+            #    print(f"Parameter Name: {name}")
+            #    print(f"Gradients: {param.grad}")
+            #    print(f"Parameter Value: {param}")
+            #    print(f"Parameter Shape: {param.shape}")
+            #    print(f"Requires Gradient: {param.requires_grad}")
+            #    print("-" * 40)
+            #return
+        user_lr *= user_lr_decay 
+
+    print(f"epoch: {iter+1} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}")
+    results.append((iter, loss_all, loss_samples, loss_kl))
+    return results
+
+
 def train_density(model, dataloader, criterion, optimizer, warmup_scheduler, state_size, 
             lr_scheduler, warmup_period,
             num_epochs=100, loss_print_interval=1, print_grad=False):
@@ -383,7 +478,7 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
             state_size, device,
             lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
             num_epochs=100, loss_print_interval=1, print_grad=False,
-            user_lr_decay=1):
+            user_lr_decay=1,):
     results = []
     for iter in tqdm(range(num_epochs)):
         loss_sum_all = 0.0
