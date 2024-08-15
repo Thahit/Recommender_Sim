@@ -6,6 +6,7 @@ parent_dir = os.path.abspath(os.path.join(os.getcwd(), os.pardir))
 
 sys.path.append(parent_dir)
 print(os.getcwd())
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
 import torch
 import torch.nn as nn
@@ -37,9 +38,9 @@ def plot_results(model, sample_path, timecheat, state_size, output_dir):
     example_out = simulate_single_partial_function_approx(model)
 
     #_________________plot____________________________________--
-    time_series_1 = sample_path # Timestamps for the first time series
-    time_series_2 = torch.clamp(torch.as_tensor(example_out_forced),0,70).detach().numpy()  # Timestamps for the second time series
-    time_series_3 = torch.clamp(torch.as_tensor(example_out), 0, 70).detach().numpy()  # Timestamps for the second time series
+    time_series_1 = sample_path.detach().numpy() # Timestamps for the first time series
+    time_series_2 = (torch.clamp(torch.as_tensor(example_out_forced),0,70).detach().numpy())  # Timestamps for the second time series
+    time_series_3 = (torch.clamp(torch.as_tensor(example_out), 0, 70).detach().numpy())  # Timestamps for the second time series
 
     fig, ax = plt.subplots(figsize=(8, 5))
     ax.scatter(time_series_1, [1] * len(time_series_1), color='blue', label='Ground Truth', s=10, marker='o')
@@ -58,7 +59,6 @@ def plot_results(model, sample_path, timecheat, state_size, output_dir):
     # Adjust subplot parameters to make room for the legend
     plt.subplots_adjust(right=0.75)
     ax.grid(True)
-    
     plt.savefig(os.path.join(output_dir, f"Plot_samples.png"))
     plt.close()
 
@@ -75,22 +75,20 @@ def save_losses_to_csv(results, output_dir):
 
 def main():
     # Parameters
-    num_epochs = 1500
+    num_epochs = 1200
     user_lr_max = 0.001
 
-    state_sizes = [1, 2, 4, 8]
-    hidden_dims = [8, 16, 32, 64, 128]
+    state_sizes = [1, 4]
+    hidden_dims = [8, 16, 32, 64]
     num_layers1 =  [1, 2, 3, 4]
     num_layers2 =  [1, 2, 3, 4]
     data_points =  [0, 4, 7]
-    num_tries_list =  [10, 30]
-    # Create synthetic data
-
-    # Experiment tracking
-    output_dir = 'experiment_results/function_approx_sampling'
+    num_tries_list =  [10, 20]
+    output_dir_base = 'experiment_results/function_approx_sampling'
 
     # Loop over different hyperparameters
     for user in data_points:
+        output_dir = os.path.join(output_dir_base, f"user{user}")
         checkpoint = torch.load(join(paths.dat, SETTINGS.rootpaths['models'],
                              "testing", "data.h5"))
         list_of_dicts = checkpoint['data']
@@ -136,7 +134,7 @@ def main():
                                 warmup_period=warmup_period)
 
                             # Save results
-                            params = f"size_{state_size}_hidden_{hidden_dim}_u_{user}_m1depth_{layers_in_1}_m2depth_{layers_in_2}_timecheat_{timecheat}"
+                            params = f"size_{state_size}_hidden_{hidden_dim}_u_{user}_m1depth_{layers_in_1}_m2depth_{layers_in_2}_timecheat_{timecheat}_num_tries_{num_tries}"
                             output_dir_exp = os.path.join(output_dir, params)            
                             
                             # creates path?
