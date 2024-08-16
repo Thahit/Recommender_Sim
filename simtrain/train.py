@@ -340,7 +340,7 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
 
 
 def train_function_approx_multiple_variational(model, path_list, scoring_func,optimizer, state_size, 
-        device, loss_func_kl,
+        device, loss_func_kl, include_jump=False, 
         lr_scheduler=None, warmup_period=None, warmup_scheduler=None,
         num_epochs=100, kl_weight=1, user_lr=.01, user_lr_decay=0.995,
         num_tries=20, timecheat=False, loss_print_interval=1):
@@ -356,7 +356,7 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
             loss_samples_curr = 0.
             loss_kl_curr = 0.
 
-            path, variational_means, variational_logvar = path_list[datapoint_idx]
+            path, variational_means, variational_logvar, reaction_ratio = path_list[datapoint_idx]
             variational_means, variational_logvar = torch.tensor(variational_means, 
                     requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
             
@@ -364,7 +364,8 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
             variances = torch.exp(variational_logvar)
             state = variational_means + variances*torch.randn((1, state_size))
 
-            for timestep in path:
+            for interaction_id in range(len(path)):
+                timestep = path[interaction_id]
                 current_pred = []
                 for _ in range(num_tries):
                     if timecheat:
@@ -383,6 +384,9 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
                 loss_samples_curr += (score_loss)# + thing should be useless
 
                 state = model.get_new_state(state, timestep-last_t)
+                if include_jump:
+                    reactions_ratio_tensor = torch.tensor(reaction_ratio[interaction_id], dtype=torch.float32).view(1,-1)
+                    state = model.jump(state, reactions_ratio_tensor)
                 last_t = timestep
             
             loss_kl_curr = kl_weight * torch.sum(loss_func_kl(variational_means, variances))
@@ -478,12 +482,14 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
             state_size, device,
             lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
             num_epochs=100, loss_print_interval=1, print_grad=False,
-            user_lr_decay=1,):
+            user_lr_decay=1, state_consistancy_training=False, consistancy_weight=1):
     results = []
+    mse_loss_func = nn.MSELoss()
     for iter in tqdm(range(num_epochs)):
         loss_sum_all = 0.0
         loss_sum_freq = 0.0
         loss_sum_kl = .0
+        loss_state_consistancy = .0
         #num_updates = 0
         for i in range(len(dataloader_list)):# not the nicest way to do things
             random.shuffle(dataloader_list)
@@ -491,25 +497,34 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
             for batch in dataloader:
                 timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
                 frequencies = batch['frequency'].unsqueeze(1)
+                size_curr = len(timesteps)
                 variational_means, variational_logvar = torch.tensor(variational_means, 
                     requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
                 variances = torch.exp(variational_logvar)
-                state = variational_means + variances*torch.randn((len(timesteps), state_size))
-                
+                state = variational_means + variances*torch.randn((size_curr, state_size))
+                curr_loss_state_consistancy = torch.tensor(0)
                 optimizer.zero_grad()
                 
                 # Forward pass
-                outputs = model(state, timesteps)
+                outputs, new_state = model(state, timesteps, return_new_state=True)
+                
+                if state_consistancy_training:#extra loss to enforce state transition consistancy
+                    mid_times = (.1 +0.8*torch.rand(size_curr, 1)) * timesteps
+                    mid_states = model.evolve_state(state, mid_times)
+                    rest_times = timesteps -mid_times
+                    alternative_ends = model.evolve_state(mid_states, rest_times)
+                    curr_loss_state_consistancy = consistancy_weight*mse_loss_func(new_state, alternative_ends)
                 
                 loss_freq = criterion(outputs, frequencies)  # Remove extra dimension from output
 
                 curr_loss_kl = kl_weight * torch.sum(loss_func_kl(variational_means, variances))
                 
-                loss = loss_freq + curr_loss_kl
+                loss = loss_freq + curr_loss_kl + curr_loss_state_consistancy
                 loss.backward()
                 loss_sum_all += loss.item()
                 loss_sum_freq += loss_freq.item()
                 loss_sum_kl += curr_loss_kl.item()
+                loss_state_consistancy += curr_loss_state_consistancy.item()
                 #print(f"loss: {loss} \tfrequencies: {frequencies} \n predicted: {outputs}")
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRADIENT_CLIPPING_MAX_NORM)
                 optimizer.step()    
@@ -525,22 +540,23 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
                 #logvar.grad.zero_()
                 dataloader_list[i][1] = variational_means.detach().tolist()
                 dataloader_list[i][2] = variational_logvar.detach().tolist()
-
+                
                 with warmup_scheduler.dampening():
                     #num_updates+=1
                     if warmup_scheduler.last_step + 1 >= warmup_period:
                         lr_scheduler.step()
         #print(num_updates)
         if iter % loss_print_interval == 0:
-            print(f"epoch: {iter+1} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
-            results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl))
+            print(f"epoch: {iter+1} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}, loss_state_consistancy: {loss_state_consistancy}")
+            results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl, loss_state_consistancy))
             if print_grad:
                 for name, param in model.named_parameters():
                     print(f"Parameter Name: {name}")
                     print(f"Gradients: {param.grad}")
         user_lr *= user_lr_decay # lower variational lr,  fine for it to reach 0
+        
+    print(f"epoch: {iter+1} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}, loss_state_consistancy: {loss_state_consistancy}")
+    results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl, loss_state_consistancy))
             
-    print(f"epoch: {iter+1} loss_sum_all: {loss_sum_all :.4f}, loss_sum_freq: {loss_sum_freq}, loss_sum_kl: {loss_sum_kl}")
-    results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl))
     return results
 

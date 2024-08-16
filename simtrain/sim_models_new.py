@@ -17,6 +17,7 @@ def smoothclamp_0_1(x):
     x = x/2
     return x
 
+
 def smoothclamp(x):
     #x = nn.functional.softplus(x)
     #return x
@@ -63,6 +64,7 @@ class SignWaveEmbedding(nn.Module):
         embeddings = torch.cat([sin_embeddings, cos_embeddings], dim=-1)
 
         return embeddings
+
 
 #_________________________________________base_____________________________
 class Base_Model(nn.Module):
@@ -112,6 +114,7 @@ class Base_Model(nn.Module):
     #    for layer in self.model:
     #        x = layer(x)
     #    return x
+
 
 #______________________________________state_____________________________-
 
@@ -427,6 +430,7 @@ class User_State_Intensity_Model_simple(Base_Model):
         #x = nn.functional.relu(x)
         return x
 
+
 class User_State_Intensity_Model(nn.Module):
     """
     A model for evaluating intensity functions with ODE integration over time.
@@ -521,6 +525,7 @@ class User_State_Intensity_Model(nn.Module):
 
     def forward(self, state, h, intensity):
         return self.ode(intensity, state)
+
 
 class global_Intensity_Model_ODE(Base_Model):
     """
@@ -684,6 +689,7 @@ class Intensity_Model(nn.Module):
         #print("clamped", intensity,"\tuser: ", user_intensity,"\tglobal: ", global_intensity,"\tsum: ", global_intensity+user_intensity)
         return overall, user_intensity, out_global
 
+
 #______________________________________interaction_____________________________-
 class Single_Interaction_Model(Base_Model):
     """
@@ -754,9 +760,9 @@ class Interaction_Model(nn.Module):
 
 
 #______________________________________jump_____________________________-
-class Jump_Model(Base_Model):
+class Jump_Model_with_State_encode(Base_Model):
     """
-    A model for computing jump sizes based on state and recommendation outcomes.
+    A model for computing jump sizes based on state and recommendation outcomes(get all outcomes).
 
     Args:
         state_size (int): Size of the state vector.
@@ -764,9 +770,8 @@ class Jump_Model(Base_Model):
         model_hyp (Dict): Dictionary containing model hyperparameters.
     """
     def __init__(self, state_size: int, num_outcomes: int, model_hyp: Dict):
-        super(Jump_Model, self).__init__(state_size + num_outcomes, state_size, model_hyp)
-
-        
+        super(Jump_Model_with_State_encode, self).__init__(state_size + num_outcomes, state_size, model_hyp)
+    
     def encode_outcomes(self, recommendation_outcomes):
         """
         Encode recommendation outcomes into a summary statistic.
@@ -794,6 +799,34 @@ class Jump_Model(Base_Model):
         recommendation_outcomes = self.encode_outcomes(recommendation_outcomes).view(1,-1)
         x = torch.cat((state, recommendation_outcomes), dim=1)
         x = self.model(x)# no activation needed?
+
+        return x # jump_size
+
+
+class Jump_Model_ratio(Base_Model):
+    """
+    A model for computing jump sizes based on state and recommendation outcomes(get all outcomes).
+
+    Args:
+        state_size (int): Size of the state vector.
+        num_outcomes (int): Number of outcome dimensions.
+        model_hyp (Dict): Dictionary containing model hyperparameters.
+    """
+    def __init__(self, state_size: int, model_hyp: Dict):
+        super(Jump_Model_ratio, self).__init__(1, state_size, model_hyp)
+    
+    def forward(self, ratios):
+        """
+        Compute the jump size based on state and recommendation outcomes.
+
+        Args:
+            ratios (torch.Tensor): Ratio of positive outsomes to all outcomes [0,1].
+
+        Returns:
+            torch.Tensor: Jump size tensor.
+        """
+
+        x = self.model(ratios)# no activation needed?
 
         return x # jump_size
 
@@ -954,7 +987,7 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
 #______________________________________data_generator_____________________________
 
 class all_in_one_model(nn.Module):
-    def __init__(self, model_hyp: Dict, timecheat = False,noise_size:int = 10):
+    def __init__(self, model_hyp: Dict, timecheat = False, noise_size:int = 10):
         # time as input or integrate?, for now integrate
         super(all_in_one_model, self).__init__()
         self.state_size = model_hyp["state_size"]
@@ -965,6 +998,10 @@ class all_in_one_model(nn.Module):
             extra =1
         self.time_model = Base_Model(self.state_size + noise_size + extra, 1, model_hyp["time_model"]["model_hyp"])
         self.state_model = Base_Model(self.state_size+1, self.state_size, model_hyp["state_model"]["model_hyp"])
+
+        if "jump_model" in model_hyp.keys():
+            self.jump_model = Jump_Model_ratio(self.state_size, 
+                model_hyp["jump_model"]["model_hyp"])
 
     def forward(self, state):#useless
         time_next_clapped = self.get_time(state)
@@ -987,6 +1024,12 @@ class all_in_one_model(nn.Module):
     def get_new_state(self, state, time_next_clapped):
         time_and_state = torch.cat((state, time_next_clapped), dim=1)
         return self.state_model(time_and_state)
+    
+    def jump(self, state, rev_ratio):
+        jump_value = self.jump_model(rev_ratio)
+        return state + jump_value
+    
+
 
 class Toy_intensity_Generator(nn.Module):
     def __init__(self, hyperparameter_dict: Dict):
@@ -1042,6 +1085,7 @@ class Toy_intensity_Generator(nn.Module):
     
     def evolve_state(self, state, delta):
         return self.user_state_model(state=state, h=delta)
+
 
 class Toy_intensity_Comparer(nn.Module):
     def __init__(self, hyperparameter_dict: Dict):
@@ -1128,13 +1172,16 @@ class Toy_intensity_Comparer(nn.Module):
     def get_intensity(self, state):# might want to make this time dependent
         return self.intensity_model(state) 
     
-    def forward(self, state, times):
+    def forward(self, state, times, return_new_state=False):
         #input = torch.cat((state, times), dim=1)
         #return self.all_in_one(times)
         new_state = self.evolve_state(state, times)
         
         freq =  self.get_intensity(new_state)
+        if return_new_state: 
+            return freq, new_state
         return freq
+
 
 if __name__ == "__main__2":
     # test code
