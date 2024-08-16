@@ -18,10 +18,12 @@ os.environ['NUMEXPR_MAX_THREADS'] = '16'
 loss_func = nn.NLLLoss()
 
 def simulate_single_forced_function_approx(model, path, state_size,
-                                           timecheat=False, num_tries=20):
+                                           timecheat=False, num_tries=20, state=None):
     
     last_t = 0
-    state = torch.zeros((1, state_size))
+    if (state is None):
+        state = torch.zeros((1, state_size))
+    
     results = []
     with torch.no_grad():
         for timestep in path:
@@ -40,10 +42,11 @@ def simulate_single_forced_function_approx(model, path, state_size,
     
     return results
 
-def simulate_single_function_approx(model, state_size, num_events=10, timecheat=False, num_tries=20):
+def simulate_single_function_approx(model, state_size, num_events=10, timecheat=False, num_tries=20, state=None):
     
     last_t = 0
-    state = torch.zeros((1, state_size))
+    if (state is None):
+        state = torch.zeros((1, state_size))
     results = []
     with torch.no_grad():
         for _ in range(num_events):
