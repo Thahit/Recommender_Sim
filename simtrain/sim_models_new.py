@@ -5,6 +5,7 @@ from torchdiffeq import odeint
 from typing import Dict
 import math
 import numpy as np
+import torchbnn as bnn
 
 ODE_GRADIENT_CLIP = 1e4
 MIN_INTEGRAL = 1e-5
@@ -81,14 +82,25 @@ class Base_Model(nn.Module):
 
         last_w = ndims_in
         layers = []
-        for w in model_hyp['layer_width']:
-            layers.append(nn.Linear(last_w, w))
-            layers.append(nn.SiLU())
-            last_w = w
-        layers.append(nn.Linear(last_w, ndims_out))
-        self.model = nn.Sequential(*layers)
+            
+        if model_hyp.get("bayesian", False):
+            print("bayesian")
+            for w in model_hyp['layer_width']:
+                layers.append(bnn.BayesLinear(prior_mu=0, prior_sigma=.1, 
+                        in_features=last_w, out_features=w))
+                layers.append(nn.SiLU())
+                last_w = w
+            layers.append(bnn.BayesLinear(prior_mu=0, prior_sigma=.1, 
+                        in_features=last_w, out_features=ndims_out))
+        else:
+            for w in model_hyp['layer_width']:
+                layers.append(nn.Linear(last_w, w))
+                layers.append(nn.SiLU())
+                last_w = w
+            layers.append(nn.Linear(last_w, ndims_out))
 
         #self._initialize_weights()
+        self.model = nn.Sequential(*layers)
     
     def _initialize_weights(self):
         """
