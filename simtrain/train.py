@@ -357,7 +357,7 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
             loss_samples_curr = 0.
             loss_kl_curr = 0.
 
-            path, variational_means, variational_logvar, reaction_ratio = path_list[datapoint_idx]
+            path, variational_means, variational_logvar, reaction_ratio, extras = path_list[datapoint_idx]
             variational_means, variational_logvar = torch.tensor(variational_means, 
                     requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
             
@@ -421,7 +421,7 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
             optimizer.zero_grad()
         #print(num_steps)
         if iter % loss_print_interval == 0:
-            print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
+            print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples:.4f}, loss_sum_kl: {loss_kl:.4f}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
             results.append((iter, loss_all, loss_samples, loss_kl))
 
             #for name, param in model.named_parameters():
@@ -434,7 +434,7 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
             #return
         user_lr *= user_lr_decay 
 
-    print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
+    print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples:.4f}, loss_sum_kl: {loss_kl:.4f}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
     results.append((iter, loss_all, loss_samples, loss_kl))
     return results
 
