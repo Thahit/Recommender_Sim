@@ -341,12 +341,12 @@ def train_single_function_approx(model, path, scoring_func,optimizer, state_size
 
 
 def train_function_approx_multiple_variational(model, path_list, scoring_func,optimizer, state_size, 
-        device, loss_func_kl, include_jump=False, 
+        device, loss_func_kl, include_jump=False, logging_shift=0,
         lr_scheduler=None, warmup_period=None, warmup_scheduler=None,
         num_epochs=100, kl_weight=1, user_lr=.01, user_lr_decay=0.995,
         num_tries=20, timecheat=False, loss_print_interval=1):
     results =  []
-    for iter in tqdm(range(num_epochs)):
+    for iter in tqdm(range(-logging_shift, num_epochs-logging_shift)):
         
         loss_all = 0.
         loss_samples = 0.
@@ -421,7 +421,7 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
             optimizer.zero_grad()
         #print(num_steps)
         if iter % loss_print_interval == 0:
-            print(f"epoch: {iter+1} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}")
+            print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
             results.append((iter, loss_all, loss_samples, loss_kl))
 
             #for name, param in model.named_parameters():
@@ -434,7 +434,7 @@ def train_function_approx_multiple_variational(model, path_list, scoring_func,op
             #return
         user_lr *= user_lr_decay 
 
-    print(f"epoch: {iter+1} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}")
+    print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_all :.4f}, loss_sum_freq: {loss_samples}, loss_sum_kl: {loss_kl}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
     results.append((iter, loss_all, loss_samples, loss_kl))
     return results
 
