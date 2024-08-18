@@ -568,3 +568,91 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
             
     return results
 
+
+def train_density_multiple_variational_sorted(model, dataloader_list, criterion, optimizer, warmup_scheduler, 
+            state_size, device,
+            lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
+            num_epochs=100, loss_print_interval=1, print_grad=False,
+            train_bayesian_weight=0,logging_shift=0,
+            user_lr_decay=1, state_consistancy_training=False, consistancy_weight=1):
+    results = []
+    mse_loss_func = nn.MSELoss()
+    for iter in tqdm(range(num_epochs)):
+        loss_sum_all = 0.0
+        loss_sum_freq = 0.0
+        loss_sum_kl = .0
+        loss_state_consistancy = .0
+        #num_updates = 0
+        kl_loss_func_model = bnn.BKLLoss(reduction='mean', last_layer_only=False)
+
+        for i in range(-logging_shift,len(dataloader_list)-logging_shift):# not the nicest way to do things
+            random.shuffle(dataloader_list)
+            dataloader, variational_means, variational_logvar, extras = dataloader_list[i]
+            variational_means, variational_logvar = torch.tensor(variational_means, 
+                    requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
+            variances = torch.exp(variational_logvar)
+            state = variational_means + variances*torch.randn((1, state_size))
+            
+            curr_loss_state_consistancy = 0
+            loss_freq=0
+            optimizer.zero_grad()
+            last_t = -0.1
+            for batch in dataloader:
+                timesteps = batch['timestep'][0]  # Add batch dimension
+                delta = timesteps- last_t
+                last_t = timesteps
+                frequencies = batch['frequency'].unsqueeze(1)
+                #curr_loss_state_consistancy = torch.tensor(0)
+                
+                
+                # Forward pass
+                outputs, state = model(state, delta, return_new_state=True)
+                
+                loss_freq = loss_freq+criterion(outputs, frequencies)  # Remove extra dimension from output
+
+            curr_loss_kl = kl_weight * torch.sum(loss_func_kl(variational_means, variances))
+            
+            loss = loss_freq + curr_loss_kl 
+            if train_bayesian_weight:
+                loss = loss + train_bayesian_weight * kl_loss_func_model(model)
+            loss.backward()
+            loss_sum_all += loss.item()
+            loss_sum_freq += loss_freq.item()
+            loss_sum_kl += curr_loss_kl.item()
+            loss_state_consistancy += curr_loss_state_consistancy#.item()
+            #print(f"loss: {loss} \tfrequencies: {frequencies} \n predicted: {outputs}")
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRADIENT_CLIPPING_MAX_NORM)
+            optimizer.step()    
+
+            # update vriational parameters
+            torch.nn.utils.clip_grad_norm_(variational_means, max_norm=GRADIENT_CLIPPING_MAX_NORM)
+            torch.nn.utils.clip_grad_norm_(variational_logvar, max_norm=GRADIENT_CLIPPING_MAX_NORM)
+            with torch.no_grad():
+                variational_means -= user_lr * variational_means.grad
+                variational_logvar -= user_lr * variational_logvar.grad  
+            #print(means)
+            #means.grad.zero_()
+            #logvar.grad.zero_()
+            dataloader_list[i][1] = variational_means.detach().tolist()
+            dataloader_list[i][2] = variational_logvar.detach().tolist()
+            
+            with warmup_scheduler.dampening():
+                #num_updates+=1
+                if warmup_scheduler.last_step + 1 >= warmup_period:
+                    lr_scheduler.step()
+        
+        if iter % loss_print_interval == 0:
+            print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_sum_all:.3f}, loss_sum_freq: {loss_sum_freq:.3f}, loss_sum_kl: {loss_sum_kl:.3f}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
+            results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl, loss_state_consistancy))
+            if print_grad:
+                for name, param in model.named_parameters():
+                    print(f"Parameter Name: {name}")
+                    print(f"Gradients: {param.grad}")
+            #print(f"num_updates: {num_updates}")
+        user_lr *= user_lr_decay # lower variational lr,  fine for it to reach 0
+        
+    print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_sum_all:.3f}, loss_sum_freq: {loss_sum_freq:.3f}, loss_sum_kl: {loss_sum_kl:.3f}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
+    results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl, loss_state_consistancy))
+            
+    return results
+
