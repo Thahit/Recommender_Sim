@@ -570,23 +570,23 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
 
 
 def train_density_multiple_variational_sorted(model, dataloader_list, criterion, optimizer, warmup_scheduler, 
-            state_size, device,
+            state_size, device, model_type,
             lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
             num_epochs=100, loss_print_interval=1, print_grad=False,
-            train_bayesian_weight=0,logging_shift=0,
-            user_lr_decay=1, state_consistancy_training=False, consistancy_weight=1):
+            train_bayesian_weight=0,logging_shift=0, use_jump=False,
+            user_lr_decay=1, ):
     results = []
     mse_loss_func = nn.MSELoss()
-    for iter in tqdm(range(num_epochs)):
+    for iter in tqdm(range(-logging_shift,num_epochs-logging_shift)):
         loss_sum_all = 0.0
         loss_sum_freq = 0.0
         loss_sum_kl = .0
         loss_state_consistancy = .0
         #num_updates = 0
         kl_loss_func_model = bnn.BKLLoss(reduction='mean', last_layer_only=False)
-
-        for i in range(-logging_shift,len(dataloader_list)-logging_shift):# not the nicest way to do things
-            random.shuffle(dataloader_list)
+        random.shuffle(dataloader_list)
+        for i in range(len(dataloader_list)):# not the nicest way to do things
+            
             dataloader, variational_means, variational_logvar, extras = dataloader_list[i]
             variational_means, variational_logvar = torch.tensor(variational_means, 
                     requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
@@ -598,17 +598,25 @@ def train_density_multiple_variational_sorted(model, dataloader_list, criterion,
             optimizer.zero_grad()
             last_t = -0.1
             for batch in dataloader:
-                timesteps = batch['timestep'][0]  # Add batch dimension
+                timesteps = batch['timestep']  # Add batch dimension
+                if model_type == "ode":
+                    timesteps=timesteps[0]
+                else:
+                    timesteps = timesteps.unsqueeze(1)
                 delta = timesteps- last_t
                 last_t = timesteps
                 frequencies = batch['frequency'].unsqueeze(1)
+                reaction = batch['reaction'].unsqueeze(1)
                 #curr_loss_state_consistancy = torch.tensor(0)
                 
                 
-                # Forward pass
+
                 outputs, state = model(state, delta, return_new_state=True)
                 
                 loss_freq = loss_freq+criterion(outputs, frequencies)  # Remove extra dimension from output
+
+                if use_jump  and reaction[0]!= -1:
+                    state = model.jump(state, reaction)
 
             curr_loss_kl = kl_weight * torch.sum(loss_func_kl(variational_means, variances))
             
