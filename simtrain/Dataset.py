@@ -36,7 +36,7 @@ class CustomDataset(Dataset):
 
 class TimestepFrequencyDataset(Dataset):
     def __init__(self, timesteps, num_random_points=100, interval=0.5, max_time=70,
-                 sort_nrs= False):
+                 sort_nrs= False, reaction_ratio=None,):
         """
         Args:
             timesteps (numpy array): Array of positive timesteps.
@@ -44,6 +44,7 @@ class TimestepFrequencyDataset(Dataset):
             interval (float): Interval length to compute frequency.
             max_time (float): maximum time the dataset is allowed to contain.
         """
+        self.centered_intervals = not (reaction_ratio is None)
         self.timesteps = np.array(timesteps)
         self.num_random_points = num_random_points
         self.interval = interval
@@ -53,13 +54,25 @@ class TimestepFrequencyDataset(Dataset):
         #self.random_points = np.sort(np.random.uniform(0, self.max_time, self.num_random_points))
         self.random_points = np.linspace(0, max_time, num_random_points)
         self.unique_points = np.unique(np.concatenate([self.random_points, self.timesteps]))
-        
+
         if sort_nrs:
             self.unique_points = np.sort(self.unique_points)
         # Calculate frequencies for each point
-        self.frequencies = np.array([self.calculate_frequency(point) for point in self.unique_points])
+        self.frequencies = np.array([self.calculate_frequency(point, self.centered_intervals) for point in self.unique_points])
         
-    def calculate_frequency(self, point):
+        if self.centered_intervals:# add reactions for jump model
+            print("save interaction ratios")
+            self.reactions=[]
+            #not the best way to do this
+            for el in self.unique_points:
+                if el in self.timesteps:
+                    index = np.where(self.timesteps == el)[0][0]
+                    self.reactions.append(reaction_ratio[index])
+                else:
+                    self.reactions.append(-1)
+
+        
+    def calculate_frequency(self, point, centered_intervals=True):
         """
         Calculate frequency of events in the interval [point, point + interval).
         
@@ -70,7 +83,11 @@ class TimestepFrequencyDataset(Dataset):
             float: Frequency of events per interval.
         """
         # could be made more efficient by using the input is sorted
-        count = np.sum(np.abs(self.timesteps - point) <= self.interval/2)
+        if centered_intervals:
+            count = np.sum(np.abs(self.timesteps - point) <= self.interval/2)
+        else:
+            difference = self.timesteps - point
+            count = np.sum(((difference) <= self.interval) & (difference>=0))
         frequency = count / self.interval
         return frequency
     
@@ -89,5 +106,10 @@ class TimestepFrequencyDataset(Dataset):
         """
         timestep = self.unique_points[idx]
         frequency = self.frequencies[idx]
-        return {'timestep': torch.tensor(timestep, dtype=torch.float32),
-                'frequency': torch.tensor(frequency, dtype=torch.float32)}
+        datapoint = {'timestep': torch.tensor(timestep, dtype=torch.float32),
+                'frequency': torch.tensor(frequency, dtype=torch.float32),
+                }
+        if self.calculate_frequency:
+            reaction = self.reactions[idx]
+            datapoint["reaction"] = torch.tensor(reaction, dtype=torch.float32)
+        return datapoint
