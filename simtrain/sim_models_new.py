@@ -34,8 +34,9 @@ class SignWaveEmbedding(nn.Module):
         Initialize the SignWaveEmbedding module.
         
         Args:
-            num_frequencies (int): Number of different frequencies to use.
             embedding_dim (int): Dimension of the resulting embedding vector.
+            max_freq (int): Maximal frequency used.
+
         """
         assert embedding_dim %2==0
         super(SignWaveEmbedding, self).__init__()
@@ -233,9 +234,6 @@ class User_State_Model(nn.Module):
     def __init__(self, state_size: int, model_hyp: Dict):
         super(User_State_Model, self).__init__()
 
-        # time as input or integrate?, for now integrate
-        #super(User_State_Model, self).__init__(state_size, state_size, model_hyp)
-
         # last layer is linear= no activation
         self.ode_func = Ode_Function(state_size, model_hyp)
 
@@ -257,7 +255,7 @@ class User_State_Model(nn.Module):
             state =  state + (self.noise * torch.randn(state.shape) * h).clone()
         return state
     
-    def forward_old2(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
+    '''def forward(self, state: torch.Tensor, h: int, h_0: int = 0):# ode solver
         """
         Evolve the state from time h_0 to h using ODE integration.
 
@@ -276,7 +274,7 @@ class User_State_Model(nn.Module):
             state = odeint(self.ode_func, state, t)[1]  # h_t contains the states at t=0 and t=h
 
         state = self.add_noise(state, h)
-        return state
+        return state'''
     
     def forward(self, state: torch.Tensor, h: int, interval_time=.1):# discrete
         """
@@ -336,7 +334,8 @@ class Conditioned_User_State_Model(nn.Module):
             state = state + (self.noise * torch.randn(state.shape) * h).clone()
         return state
     
-    def forward_old(self, start_state: torch.Tensor, user_params: torch.Tensor, h: int, h_0: int = 0):
+    '''
+    def forward(self, start_state: torch.Tensor, user_params: torch.Tensor, h: int, h_0: int = 0):
         """
         Evolve the state from time h_0 to h using ODE integration.
 
@@ -356,7 +355,8 @@ class Conditioned_User_State_Model(nn.Module):
         end_state = h_t[1]
 
         return end_state
-    
+    '''
+
     def forward(self, state: torch.Tensor, user_params: torch.Tensor, h: int, interval_time=.05):# discrete
         """
         Evaluate the integral of the state function over discrete time intervals.
@@ -474,7 +474,8 @@ class User_State_Intensity_Model(nn.Module):
 
         return out
     
-    def forward_old(self, time, state, state_model, h_0 = 0, interval_time=.05, user_params=None):
+    '''
+    def forward(self, time, state, state_model, h_0 = 0, interval_time=.05, user_params=None):
         """
         Evaluate the integral of the intensity function over discrete time intervals.
 
@@ -511,8 +512,10 @@ class User_State_Intensity_Model(nn.Module):
         #out = nn.functional.sigmoid(out)
         #out = torch.exp(-out)
         return out
-    
-    def forward_old2(self, time, state, state_model, h_0 = 0):# too unstable to have a double integral
+    '''
+
+    '''
+    def forward(self, time, state, state_model, h_0 = 0):# too unstable to have a double integral
         """
         Evaluate the integral of the intensity function using ODE integration.
 
@@ -534,6 +537,7 @@ class User_State_Intensity_Model(nn.Module):
         #out = nn.functional.relu(out)
         out = torch.exp(-out).clone()
         return out
+    '''
 
     def forward(self, state, h, intensity):
         return self.ode(intensity, state)
@@ -581,7 +585,8 @@ class global_Intensity_Model(nn.Module):
         super(global_Intensity_Model, self).__init__()
         self.ode_func = global_Intensity_Model_ODE(time_size, model_hyp)
 
-    def forward_old2(self, time, h_0 = 0):
+    '''
+    def forward(self, time, h_0 = 0):
         """
         Compute the global intensity based on time using ODE integration.
 
@@ -598,8 +603,10 @@ class global_Intensity_Model(nn.Module):
         out = odeint(self.ode_func, initial_cond, t)[1]
         out = nn.functional.sigmoid(out)
         return out
+    '''
 
-    def forward_old(self, time, h_0 = 0, interval_time=torch.as_tensor([.2])):
+    '''
+    def forward(self, time, h_0 = 0, interval_time=torch.as_tensor([.2])):
         """
         Evaluate the integral of the intensity function over discrete time intervals.
 
@@ -625,7 +632,8 @@ class global_Intensity_Model(nn.Module):
         #out = nn.functional.sigmoid(out)
         #out= torch.exp(-out)
         return out
-    
+    '''
+
     def forward(self, time):
         return self.ode_func(time)
 
@@ -756,13 +764,13 @@ class Interaction_Model(nn.Module):
 
         Args:
             state (torch.Tensor): State tensor.
-            recommendations (torch.Tensor): Batch of recommendation tensors.
+            recommendations (torch.Tensor): Batch of recommendation tensors. Batch size of 1 is assumed.
 
         Returns:
             torch.Tensor: Interaction outcomes tensor for each recommendation.
         """
         out = []
-        #for i in range(recommendations.size(1)):# iter over recommendations
+        recommendations = recommendations[0]
         for i in range(len(recommendations)):
             recommendation = recommendations[i].view(1,1)
             curr_out = self.single_interaction_model(state, recommendation)
@@ -870,8 +878,7 @@ class User_simmulation_Model(nn.Module):
                                                    self.num_interaction_outcomes, hyperparameter_dict["interaction_model"]["model_hyp"])
         
         jump_model_interaction_size = self.num_interaction_outcomes * self.num_interaction_outcomes# could change if weuse summary stats
-        jump_model_interaction_size = self.num_interaction_outcomes
-        self.jump_model = Jump_Model(self.state_size, jump_model_interaction_size, hyperparameter_dict["jump_model"]["model_hyp"])
+        self.jump_model = Jump_Model_with_State_encode(self.state_size, jump_model_interaction_size, hyperparameter_dict["jump_model"]["model_hyp"])
 
     def forward(self, state, recommendations):
         raise NotImplementedError
@@ -996,11 +1003,21 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
         return overall_intensity
 
 
-#______________________________________data_generator_____________________________
+#______________________________________complete models_____________________________
 
 class all_in_one_model(nn.Module):
-    def __init__(self, model_hyp: Dict, timecheat = False, noise_size:int = 10):
-        # time as input or integrate?, for now integrate
+    """
+    A neural network model that integrates time, state, and noise into a comprehensive framework
+    for sequential predictions. The model can optionally encode time, and predict both the next 
+    time step and the corresponding state.
+    
+    Args:
+        model_hyp (Dict): A dictionary containing the model hyperparameters for the 
+                          time, state, and (optionally) jump models.
+        timecheat (bool, optional): If True, allows direct access to global time. Defaults to False.
+        noise_size (int, optional): The size of the noise vector used for prediction. Defaults to 1.
+    """
+    def __init__(self, model_hyp: Dict, timecheat = False, noise_size:int = 11):
         super(all_in_one_model, self).__init__()
         self.state_size = model_hyp["state_size"]
         self.noise_size = noise_size
@@ -1030,11 +1047,30 @@ class all_in_one_model(nn.Module):
                 model_hyp["jump_model"]["model_hyp"])
 
     def forward(self, state):#useless
+        """
+        Forward pass to predict the next time step and corresponding state.
+        
+        Args:
+            state (torch.Tensor): The current state tensor.
+        
+        Returns:
+            tuple: A tuple containing the predicted next time step and the corresponding state.
+        """
         time_next_clapped = self.get_time(state)
         next_state = self.get_new_state(state, time_next_clapped)
         return time_next_clapped, next_state
     
     def get_time(self, state, global_time=None):
+        """
+        Predicts the next time step based on the current state, noise, and optional global time.
+        
+        Args:
+            state (torch.Tensor): The current state tensor.
+            global_time (torch.Tensor, optional): The global time tensor, required if timecheat is True.
+        
+        Returns:
+            torch.Tensor: The predicted next time step.
+        """
         noise = torch.rand((1, self.noise_size), requires_grad=True)
         #print(f"noise: {noise}")
         if self.timecheat:
@@ -1052,7 +1088,16 @@ class all_in_one_model(nn.Module):
         return time_next#smoothclamp(time_next) #torch.clamp(time_next, 0, 70)#smoothclamp(time_next)
 
     def get_new_state(self, state, time_next_clapped):
+        """
+        Predicts the next state based on the current state and the predicted next time step.
         
+        Args:
+            state (torch.Tensor): The current state tensor.
+            time_next_clapped (torch.Tensor): The predicted next time step.
+        
+        Returns:
+            torch.Tensor: The predicted next state.
+        """
         if self.encode_time:
             time_emb=self.embed(time_next_clapped)
             time_and_state = torch.cat((state, time_emb, time_next_clapped), dim=1)
@@ -1061,12 +1106,30 @@ class all_in_one_model(nn.Module):
         return self.state_model(time_and_state)
     
     def jump(self, state, rev_ratio):
+        """
+        Adjusts the state based on a jump model, useful for modeling sudden transitions.
+        
+        Args:
+            state (torch.Tensor): The current state tensor.
+            rev_ratio (torch.Tensor): A ratio representing the reverse jump effect.
+        
+        Returns:
+            torch.Tensor: The adjusted state after applying the jump.
+        """
         jump_value = self.jump_model(rev_ratio)
         return state + jump_value
     
 
 
 class Toy_intensity_Generator(nn.Module):
+    """
+    A toy model for generating event intensities based on a user's state. The model evolves the state
+    over time and computes the intensity of events, allowing for the generation of event times and paths.
+
+    Args:
+        hyperparameter_dict (Dict): A dictionary containing the model hyperparameters for the state 
+                                    and intensity models.
+    """
     def __init__(self, hyperparameter_dict: Dict):
         super(Toy_intensity_Generator, self).__init__()
         self.state_size = hyperparameter_dict["state_size"]
@@ -1078,8 +1141,20 @@ class Toy_intensity_Generator(nn.Module):
         #self.state = torch.zeros((1,self.state_size))
 
     def find_h(self, state, uniform_guess, interval_size=.1, max_iter=250):
+        """
+        Finds the optimal time interval `h` such that the cumulative intensity surpasses the target value.
+        
+        Args:
+            state (torch.Tensor): The current state tensor.
+            uniform_guess (torch.Tensor): A uniform random value used to set the target intensity.
+            interval_size (float, optional): The size of each interval for state evolution. Defaults to 0.1.
+            max_iter (int, optional): The maximum number of iterations. Defaults to 250.
+        
+        Returns:
+            float: The computed time interval `h`.
+        """
         intensity = torch.zeros((1,1), requires_grad=True)
-        #h = torch.zeros((1,1), requires_grad=True)# torch.tensor([EPSILON], requires_grad=True)
+
         target = -torch.log(uniform_guess+EPSILON)
         curr_state = state
         for i in range(max_iter):
@@ -1092,19 +1167,32 @@ class Toy_intensity_Generator(nn.Module):
         return interval_size * max_iter
 
     def sample_one(self, state):
-        #from scipy.optimize import brentq
+        """
+        Samples a single event time by finding the optimal interval `h`.
+        
+        Args:
+            state (torch.Tensor): The current state tensor.
+        
+        Returns:
+            torch.Tensor: The sampled event time `h`.
+        """
 
         u = torch.rand(1, requires_grad=False)# theoretically one should also do -u + 1
-        #h_optimized = self.optimize_h(u)
-        #h_optimized = brentq(self.objective_function, 1e-30, 200, args=(u, state), 
-        #                    maxiter=40, xtol=1e-7,)
-        #h_optimized = self.binary_search(state, u)
         
         h_optimized = torch.tensor([self.find_h(state, u)])
-        #print(f"u: {u} \t h: {h_optimized}")
         return torch.flatten(h_optimized)
     
     def sample_path(self, num_samples = 10,state = None):
+        """
+        Samples a path of event times based on the evolving state.
+        
+        Args:
+            num_samples (int, optional): The number of event times to sample. Defaults to 10.
+            state (torch.Tensor, optional): The initial state tensor. Defaults to a zero tensor.
+        
+        Returns:
+            torch.Tensor: A tensor of sampled event times.
+        """
         if state is None:
             state = torch.zeros((1,self.state_size))
         path = []
@@ -1119,10 +1207,29 @@ class Toy_intensity_Generator(nn.Module):
         return path.detach().numpy()
     
     def evolve_state(self, state, delta):
+        """
+        Evolves the state by a given time interval `delta`.
+        
+        Args:
+            state (torch.Tensor): The current state tensor.
+            delta (float): The time interval by which to evolve the state.
+        
+        Returns:
+            torch.Tensor: The evolved state tensor.
+        """
         return self.user_state_model(state=state, h=delta)
 
 
 class Toy_intensity_Comparer(nn.Module):
+    """
+    A neural network model designed to compare event intensities over time by evolving the user's state
+    and calculating the resulting intensities. It supports different state evolution models(ODE or simple) and optional
+    time encoding.
+
+    Args:
+        hyperparameter_dict (Dict): A dictionary containing the model hyperparameters for the state,
+                                    intensity, and (optionally) jump models.
+    """
     def __init__(self, hyperparameter_dict: Dict):
         super(Toy_intensity_Comparer, self).__init__()
 
@@ -1157,6 +1264,16 @@ class Toy_intensity_Comparer(nn.Module):
                 hyperparameter_dict["jump_model"]["model_hyp"])
 
     def evolve_state(self, state, delta):
+        """
+        Evolves the user's state over a time interval `delta`.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+            delta (torch.Tensor): The time interval over which to evolve the state.
+        
+        Returns:
+            torch.Tensor: The evolved state tensor.
+        """
         if self.state_model_type != "simple":
             return self.user_state_model(state, delta) 
         if self.encode_time:
@@ -1167,11 +1284,30 @@ class Toy_intensity_Comparer(nn.Module):
         return self.user_state_model(input)
     
     def get_intensity(self, state):# might want to make this time dependent
+        """
+        Calculates the event intensity based on the current state.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+        
+        Returns:
+            torch.Tensor: The calculated intensity.
+        """
         return self.intensity_model(state) 
     
     def forward(self, state, times, return_new_state=False):
-        #input = torch.cat((state, times), dim=1)
-        #return self.all_in_one(times)
+        """
+        Computes the intensity after evolving the state over given time intervals.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+            times (torch.Tensor): The time intervals over which to evolve the state.
+            return_new_state (bool, optional): Whether to return the new state along with the intensity. Defaults to False.
+        
+        Returns:
+            torch.Tensor: The calculated intensity.
+            torch.Tensor (optional): The new state, if `return_new_state` is True.
+        """
         new_state = self.evolve_state(state, times)
         
         freq =  self.get_intensity(new_state)
@@ -1179,12 +1315,22 @@ class Toy_intensity_Comparer(nn.Module):
             return freq, new_state
         return freq
     
-    def jump(self, state, rev_ratio):
+    def jump(self, state, rev_ratio):# not working well 
+        """
+        Adjusts the state based on a jump model, useful for modeling sudden transitions.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+            rev_ratio (torch.Tensor): A ratio representing the reverse jump effect.
+        
+        Returns:
+            torch.Tensor: The adjusted state after applying the jump.
+        """
         jump_value = self.jump_model(rev_ratio)
         return state + jump_value
 
 
-if __name__ == "__main__2":
+if __name__ == "__main__":
     # test code
 
     state_size = 2
@@ -1198,28 +1344,31 @@ if __name__ == "__main__2":
     state_model = User_State_Model(state_size=state_size, model_hyp=user_state_dict["model_hyp"])
     state = torch.randn((state_size))
     state = state.unsqueeze(0)
+    start_time = 0.
     target_time = 1.
     new_state = state_model(state, target_time)
     print("new_state: ", new_state, "\t shape: ", new_state.shape)
 
     # intensity model
     intensity_state_dict = {"model_hyp": {"user_model_hyp": {"layer_width": [3,3]},
-                                          "global_model_hyp": {"layer_width": [3,3]}}
-                            }
+            "global_model_hyp": {"layer_width": [3,3]}}
+        }
     time_tensor = torch.as_tensor([target_time])
+    start_time_tensor = torch.as_tensor([start_time])
     intensity_model = Intensity_Model(state_size=state_size, time_size= time_size, model_hyp= intensity_state_dict["model_hyp"])
-    intensity = intensity_model(new_state, time_tensor)
-    print("intensity: ", intensity, "\t shape: ", intensity.shape)
+    overall_intensity, user_intensity, out_global = intensity_model(new_state, time_tensor, state_model=state_model,
+                                start_time=start_time_tensor)
+    print("intensity: ", overall_intensity, "\t shape: ", overall_intensity.shape)
 
     # interaction model
     interaction_state_dict = {"model_hyp": {"layer_width": [3,3]}
-                            }
+                    }
 
     recommendations = torch.randn((1,num_recomm, recom_dim))
     #recommendations = recommendations.unsqueeze(0)
-    intensity_model = Interaction_Model(state_size=state_size, recommendation_size=recom_dim,
+    interaction_Model = Interaction_Model(state_size=state_size, recommendation_size=recom_dim,
                                         num_outcomes=num_interaction_outcomes, interaction_model_hyp=interaction_state_dict["model_hyp"])
-    interactions = intensity_model(new_state, recommendations)
+    interactions = interaction_Model(new_state, recommendations)
     print("Interactions: ", interactions, "\t shape: ", interactions.shape)
     
     # backprop?
@@ -1231,7 +1380,7 @@ if __name__ == "__main__2":
     jump_state_dict = {"model_hyp": {"layer_width": [3,3]}
                         }
 
-    jump_model = Jump_Model(state_size, num_interaction_outcomes*num_recomm, jump_state_dict["model_hyp"])
+    jump_model = Jump_Model_with_State_encode(state_size, num_interaction_outcomes*num_recomm, jump_state_dict["model_hyp"])
     jump = jump_model(new_state, interactions)
     print("jump: ", jump, "\t shape: ", jump.shape)
     new_state = new_state + jump
