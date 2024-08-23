@@ -11,22 +11,64 @@ from scipy.sparse import coo_matrix
 import torch
 import torch.nn as nn
 from typing import Callable, List, Tuple, Dict
-
+from functools import partial
+import matplotlib.pyplot as plt
 os.environ['NUMEXPR_MAX_THREADS'] = '16'
 
 #loss_func = nn.functional.mse_loss
-loss_func = nn.NLLLoss()
 
-def simulate_single_forced_function_approx(model, path, state_size,
+def visualize_samples(ind,train_model, path_list, state_size, timecheat=False, 
+                      use_jump=False):
+    sample_path = path_list[ind]
+    print(sample_path[4]["user_id"])
+    state = torch.tensor([sample_path[1]])
+    # simpler nn
+    simulate_single_partial_forced_function_approx = partial(
+        simulate_single_forced_function_approx, user_data=sample_path,state=state,
+                                num_tries=100, timecheat=timecheat, state_size=state_size,
+                                use_jump=use_jump)
+    simulate_single_partial_function_approx = partial(
+        simulate_single_function_approx, num_events =len(sample_path[0]), state=state,
+                                num_tries=1, timecheat=timecheat, state_size=state_size,
+                                jump_data=sample_path[3] if use_jump else None)
+    # intensity
+    example_out_forced = simulate_single_partial_forced_function_approx(train_model)
+    example_out = simulate_single_partial_function_approx(train_model)
+
+    time_series_1 = sample_path[0] # Timestamps for the first time series
+    time_series_2 = torch.clamp(torch.as_tensor(example_out_forced),0,70).detach().numpy()  # Timestamps for the second time series
+    time_series_3 = torch.clamp(torch.as_tensor(example_out), 0, 70).detach().numpy()  # Timestamps for the second time series
+
+
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.scatter(time_series_3, [3] * len(time_series_3), color='green', label='Simmulation Free', s=10, marker='x')
+
+    ax.scatter(time_series_2, [2] * len(time_series_2), color='red', label='Simmulation Forced', s=10, marker='x')
+    ax.scatter(time_series_1, [1] * len(time_series_1), color='blue', label='Ground Truth', s=10, marker='o')
+
+    ax.set_xlabel('Time')
+    ax.set_yticks([1, 2, 3])
+    ax.set_yticklabels(['Ground Truth', 'Simmulation Forced', "Simmulation Free"])
+    ax.set_title('Sampled Time series')
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), frameon=False)
+
+    plt.subplots_adjust(right=0.75)
+    ax.grid(True)
+    plt.show()
+
+def simulate_single_forced_function_approx(model, user_data, state_size, use_jump=False,
                                            timecheat=False, num_tries=20, state=None):
     
     last_t = 0
     if (state is None):
         state = torch.zeros((1, state_size))
-    
+    path, variational_means, variational_logvar, reaction_ratio, extra = user_data
     results = []
     with torch.no_grad():
-        for timestep in path:
+        for interaction_id in range(len(path)):
+            timestep = path[interaction_id]
             current_pred = []
             for _ in range(num_tries):
                 if timecheat:
@@ -39,17 +81,23 @@ def simulate_single_forced_function_approx(model, path, state_size,
             results.append(torch.mean(current_pred))
             last_t = timestep
             state = model.get_new_state(state, torch.tensor([[timestep]]))
+            if use_jump:
+                    reactions_ratio_tensor = torch.tensor(reaction_ratio[interaction_id], dtype=torch.float32).view(1,-1)
+                    state = model.jump(state, reactions_ratio_tensor)
     
     return results
 
-def simulate_single_function_approx(model, state_size, num_events=10, timecheat=False, num_tries=20, state=None):
+def simulate_single_function_approx(model, state_size, num_events=10, 
+            timecheat=False, num_tries=20, state=None, jump_data=False,):
+    #if use_jump:
+    #    raise NotImplementedError# what should this do?
     
     last_t = 0
     if (state is None):
         state = torch.zeros((1, state_size))
     results = []
     with torch.no_grad():
-        for _ in range(num_events):
+        for interaction_id in range(num_events):
             current_pred = []
             for _ in range(num_tries):
                 if timecheat:
@@ -63,9 +111,14 @@ def simulate_single_function_approx(model, state_size, num_events=10, timecheat=
             results.append(selected)
             last_t = selected
             state = model.get_new_state(state, torch.tensor([[selected]]))
+            
+            if jump_data:
+                reactions_ratio_tensor = torch.tensor(jump_data[interaction_id], dtype=torch.float32).view(1,-1)
+                state_new = model.jump(state, reactions_ratio_tensor)
+                #print(torch.sum(torch.abs(state_new, state)))
+                state = state_new
     
     return results
-
 
 def weighted_mse_loss(prediction, target, weight_pos=1):
     weights = torch.ones_like(target)
@@ -165,6 +218,73 @@ def print_user_params(dataloader, print_var = False, num_examples=5):
         if i >= num_examples:
             return
 
+def generate_density_plot(selected_user, model, model_type, dataloader_list, 
+                    use_variational_nn=False, train_sorted=False):
+    dataloader, variational_means, variational_logvar, extras = dataloader_list[selected_user]
+    print(extras["user_id"])
+    dataset = dataloader.dataset
+    x_range = np.linspace(0, 71, 71*2)  # Adjust the range as needed
+    x_range_tensor = torch.tensor(x_range, dtype=torch.float32).unsqueeze(1)
+    model.eval()
+    with torch.no_grad():
+        if model_type == "ode":
+            raise NotImplementedError
+            state = torch.zeros((1, state_size))
+
+            predictions = []
+            for el in x_range:
+                out = model(state, el)
+                predictions.append(out[0])
+        else:
+            if use_variational_nn:
+                predictions_list = []
+                for _ in range(20):
+                    state = torch.tensor(variational_means).repeat(len(x_range),1)
+                    predictions, states = model(state, x_range_tensor, return_new_state=True)
+                    predictions = predictions.numpy()
+                    predictions_list.append(predictions)
+                    #print("variance of states: ", torch.var(states))
+                predictions_list = np.stack(predictions_list)
+                predictions = np.mean(predictions_list, axis=0)
+                var = np.var(predictions_list, axis=0)
+                cond = (0.1>var) | (var <.01)
+                #predictions = np.where(cond , predictions, 0)
+
+            else:
+                if train_sorted:
+                    state  = torch.tensor([variational_means])
+                    for i in range(len(x_range)):
+                        curr_t = x_range_tensor[i].view(1,-1)
+                        predictions, states = model(state, curr_t, return_new_state=True)
+                else:
+                    state = torch.tensor(variational_means).repeat(len(x_range),1)
+                    predictions, states = model(state, x_range_tensor, return_new_state=True)
+                    predictions = predictions.numpy()
+                    #print("variance of states: ", torch.var(states))
+
+    print(f"area: {np.sum(predictions)*(72/200)}")
+    # Plot the results
+    plt.figure(figsize=(10, 6))
+    plt.plot(x_range, predictions, label='Model Predictions')
+
+    if use_variational_nn:
+        plt.plot(x_range, var, label='variance', color="green")
+
+    for i in range(len(dataset)):
+        sample = dataset[i]
+        x_pos= sample['timestep'].item()
+        height = torch.where(sample['frequency']>0, sample['frequency'], .1).item()
+        plt.plot([x_pos, x_pos], [0, height], linestyle='--', color='red')
+
+    plt.plot([0, 0], [0, 0], color='red', linestyle='--', alpha=1.0, label='Data Points')
+
+    #plt.scatter(x_train.numpy(), y_train.numpy(), color='red', label='Training Data')
+    plt.xlabel('Input')
+    plt.ylabel('Output')
+    plt.title('Model Predictions Over Input Range')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 def logging_func(loss_all, loss_base, loss_kl, loss_intensity):
     print(f"loss_all: {loss_all:.3f} \tloss_base: {loss_base:.3f} \tloss_kl: {loss_kl:.3f} \tloss_intensity:  {loss_intensity:.3f} \tlog of the loss: {math.log10(loss_all):.2f}")
