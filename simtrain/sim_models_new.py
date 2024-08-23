@@ -1006,10 +1006,24 @@ class all_in_one_model(nn.Module):
         self.noise_size = noise_size
         self.timecheat=timecheat
         extra=0
+
+        self.time_size= model_hyp.get("time_embedding_size",0)
+        self.max_freq= model_hyp.get("max_freq",70)
+        self.encode_time = self.time_size > 0
         if timecheat:
             extra =1
+            if self.encode_time:
+                extra += self.time_size
+
         self.time_model = Base_Model(self.state_size + noise_size + extra, 1, model_hyp["time_model"]["model_hyp"])
-        self.state_model = Base_Model(self.state_size+1, self.state_size, model_hyp["state_model"]["model_hyp"])
+
+        if self.encode_time:
+                self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
+                self.state_model = Base_Model(self.state_size+self.time_size +1, 
+                        self.state_size, model_hyp["state_model"]["model_hyp"])
+        else:
+            self.state_model = Base_Model(self.state_size+1, self.state_size, 
+                    model_hyp["state_model"]["model_hyp"])
 
         if "jump_model" in model_hyp.keys():
             self.jump_model = Jump_Model_ratio(self.state_size, 
@@ -1025,7 +1039,11 @@ class all_in_one_model(nn.Module):
         #print(f"noise: {noise}")
         if self.timecheat:
             global_time = torch.tensor([[global_time]])
-            state_and_noise = torch.cat((state, noise, global_time), dim=1)
+            if self.timecheat:
+                time_emb=self.embed(global_time)
+                state_and_noise = torch.cat((state, noise, time_emb, global_time), dim=1)
+            else:
+                state_and_noise = torch.cat((state, noise, global_time), dim=1)
         else:
             state_and_noise = torch.cat((state, noise), dim=1)
 
@@ -1034,7 +1052,12 @@ class all_in_one_model(nn.Module):
         return time_next#smoothclamp(time_next) #torch.clamp(time_next, 0, 70)#smoothclamp(time_next)
 
     def get_new_state(self, state, time_next_clapped):
-        time_and_state = torch.cat((state, time_next_clapped), dim=1)
+        
+        if self.encode_time:
+            time_emb=self.embed(time_next_clapped)
+            time_and_state = torch.cat((state, time_emb, time_next_clapped), dim=1)
+        else:
+            time_and_state = torch.cat((state, time_next_clapped), dim=1)
         return self.state_model(time_and_state)
     
     def jump(self, state, rev_ratio):
@@ -1129,48 +1152,10 @@ class Toy_intensity_Comparer(nn.Module):
         self.intensity_model = User_State_Intensity_Model_simple(self.state_size, 
             hyperparameter_dict["intensity_model"]["model_hyp"])
         
-        #self.all_in_one = Base_Model(1, 1,
-        #            hyperparameter_dict["state_model"]["model_hyp"],
-        #            noise=hyperparameter_dict["state_model"].get("noise", 0)
-        #    )
-        #self.state = torch.zeros((1,self.state_size))
+        if "jump_model" in hyperparameter_dict.keys():
+            self.jump_model = Jump_Model_ratio(self.state_size, 
+                hyperparameter_dict["jump_model"]["model_hyp"])
 
-
-    def find_h(self, state, uniform_guess, interval_size=.1, max_iter=250):
-        intensity = torch.zeros((1,1), requires_grad=True)
-        #h = torch.zeros((1,1), requires_grad=True)# torch.tensor([EPSILON], requires_grad=True)
-        target = -torch.log(uniform_guess+EPSILON)
-        curr_state = state
-        for i in range(max_iter):
-            curr_state = self.user_state_model(curr_state, interval_size, interval_time=0.05)
-            intensity = intensity + (self.intensity_model(h = interval_size, 
-                                intensity=intensity, state=curr_state)*interval_size).clone()
-            
-            if intensity > target:
-                return interval_size * i
-        return interval_size * max_iter
-
-    def sample_one(self, state):
-        u = torch.rand(1, requires_grad=False)# theoretically one should also do -u + 1
-        
-        h_optimized = torch.tensor([self.find_h(state, u)])
-        #print(f"u: {u} \t h: {h_optimized}")
-        return torch.flatten(h_optimized)
-    
-    def sample_path(self, num_samples = 10, state = None, ground_truth_to_align=None):
-        if state is None:
-            state = torch.zeros((1,self.state_size))
-        path = []
-        curr_time = 0
-        # need integral over all and afterwards over points, 
-        # -> should do checkpoints to save time
-        with torch.no_grad():
-            for _ in range(num_samples):
-                #integrate ...
-                pass
-        path = torch.stack(path)
-        return path.detach().numpy()
-    
     def evolve_state(self, state, delta):
         if self.state_model_type != "simple":
             return self.user_state_model(state, delta) 
@@ -1193,6 +1178,10 @@ class Toy_intensity_Comparer(nn.Module):
         if return_new_state: 
             return freq, new_state
         return freq
+    
+    def jump(self, state, rev_ratio):
+        jump_value = self.jump_model(rev_ratio)
+        return state + jump_value
 
 
 if __name__ == "__main__2":
