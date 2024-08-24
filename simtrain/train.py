@@ -5,10 +5,12 @@ import random
 import torchbnn as bnn
 
 GRADIENT_CLIPPING_MAX_NORM = 2.
+EPSILON = 1e-15
+
 
 def train_1_path_positive(model, user_state, timestamps, items, labels, loss_func, 
         num_classes, 
-                 intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True,
+                 intensity_loss_func, max_time, device, teacher_forcing=True,
                  conditioned=False):
     ''' expects batchsize of 1
     '''
@@ -34,25 +36,28 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
         #    print(e)
 
         # no intensity for now
-        y_pred = model.view_recommendations(items[interaction_id])# :,
-        y_pred = nn.functional.log_softmax(y_pred, dim=1)
+        y_pred = model.view_recommendations([items[interaction_id]])# :,
+        #print(items[interaction_id])
+        #print("prediction shape:", y_pred.shape)
+        y_pred = nn.functional.log_softmax(y_pred, dim=-1)
         y_true = torch.as_tensor(labels[interaction_id])# :,
-        y_true_onehot = nn.functional.one_hot(y_true, num_classes=num_classes).float()
+        y_true_onehot = nn.functional.one_hot(y_true, num_classes=num_classes).float().unsqueeze(0)
         
         if teacher_forcing:
             model.jump(y_true_onehot)
         else:
             model.jump(y_pred)
         #loss += loss_func(y_true, y_pred)# for mse
-        y_true = y_true.squeeze(0)
-        y_pred = y_pred.squeeze(0)
+        y_true = y_true
+        y_pred = y_pred.squeeze()
         #print("true: ",y_true.shape, "\t predicted: ",y_pred.shape)
         #print(torch.unique(y_true))
         loss_base += loss_func(y_pred, y_true) # NLLL
         #print("true: ",y_true, "\t predicted: ",y_pred)
-        #print("loss: ", loss_base)
+        #print("loss: ", loss_base) 
         extra_dic = {"max_div_by_N": max_div_by_N}
 
+        #loss_intensity += torch.log(intensity_loss_func(intensity, extra_dic)+EPSILON)
         loss_intensity += intensity_loss_func(intensity, extra_dic)
         curr_time = h
     
@@ -61,7 +66,7 @@ def train_1_path_positive(model, user_state, timestamps, items, labels, loss_fun
 
 def train_1_path_positive_and_negative(model, user_state, timestamps, items, labels, 
             loss_func, num_classes, 
-                 intensity_loss_func, max_time, device, epsilon = 1e-25,teacher_forcing=True,
+                 intensity_loss_func, max_time, device, epsilon = EPSILON,teacher_forcing=True,
                  positive_examples_weight=1, conditioned=False):
     ''' expects batchsize of 1
     '''
