@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 os.environ['NUMEXPR_MAX_THREADS'] = '16'
 
 #loss_func = nn.functional.mse_loss
-
+EPSILON = 1e-15
 def visualize_samples(ind,train_model, path_list, state_size, timecheat=False, 
                       use_jump=False):
     sample_path = path_list[ind]
@@ -58,6 +58,7 @@ def visualize_samples(ind,train_model, path_list, state_size, timecheat=False,
     ax.grid(True)
     plt.show()
 
+
 def simulate_single_forced_function_approx(model, user_data, state_size, use_jump=False,
                                            timecheat=False, num_tries=20, state=None):
     
@@ -86,6 +87,7 @@ def simulate_single_forced_function_approx(model, user_data, state_size, use_jum
                     state = model.jump(state, reactions_ratio_tensor)
     
     return results
+
 
 def simulate_single_function_approx(model, state_size, num_events=10, 
             timecheat=False, num_tries=20, state=None, jump_data=False,):
@@ -119,6 +121,7 @@ def simulate_single_function_approx(model, state_size, num_events=10,
                 state = state_new
     
     return results
+
 
 def weighted_mse_loss(prediction, target, weight_pos=1):
     weights = torch.ones_like(target)
@@ -158,6 +161,7 @@ def energy_score_loss(forecast_samples, observed_value, beta=1., weight_norm=1):
     #print(f"term 1 {term1}, term2: {term2}")
     energy_score = term1 - weight_norm*term2
     return energy_score
+
 
 def kl_divergence(mu1, sigma1, mu2, sigma2):
     """
@@ -200,11 +204,11 @@ def kl_loss(mu, sigma):
 
 def square_intensity_loss(intensity, extra_dic):
     max_div_by_N = extra_dic["max_div_by_N"]
-    return -torch.log(intensity) + max_div_by_N*intensity
+    return -torch.log(intensity+EPSILON) + max_div_by_N*intensity
 
 
 def log_loss(intensity, extra_dic):
-    return -torch.log(intensity)
+    return -torch.log(intensity+EPSILON)
 
 
 def print_user_params(dataloader, print_var = False, num_examples=5):
@@ -217,6 +221,7 @@ def print_user_params(dataloader, print_var = False, num_examples=5):
         i+=1
         if i >= num_examples:
             return
+
 
 def generate_density_plot(selected_user, model, model_type, dataloader_list, 
                     use_variational_nn=False, train_sorted=False):
@@ -286,8 +291,10 @@ def generate_density_plot(selected_user, model, model_type, dataloader_list,
     plt.grid(True)
     plt.show()
 
+
 def logging_func(loss_all, loss_base, loss_kl, loss_intensity):
     print(f"loss_all: {loss_all:.3f} \tloss_base: {loss_base:.3f} \tloss_kl: {loss_kl:.3f} \tloss_intensity:  {loss_intensity:.3f} \tlog of the loss: {math.log10(loss_all):.2f}")
+
 
 #__________________________________________________old___________________________
 

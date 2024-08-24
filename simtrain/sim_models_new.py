@@ -1,7 +1,7 @@
 import torch
 from functools import partial
 import torch.nn as nn
-from torchdiffeq import odeint
+#from torchdiffeq import odeint
 from typing import Dict
 import math
 import numpy as np
@@ -802,7 +802,8 @@ class Jump_Model_with_State_encode(Base_Model):
         Returns:
             torch.Tensor: Encoded outcomes tensor.
         """
-        return torch.sum(recommendation_outcomes, dim=0)
+        encoded = torch.sum(recommendation_outcomes, dim=-2)
+        return encoded
     
     def forward(self, state, recommendation_outcomes):
         """
@@ -820,7 +821,7 @@ class Jump_Model_with_State_encode(Base_Model):
         x = torch.cat((state, recommendation_outcomes), dim=1)
         x = self.model(x)# no activation needed?
 
-        return x # jump_size
+        return state + x # jump_size
 
 
 class Jump_Model_ratio(Base_Model):
@@ -851,7 +852,7 @@ class Jump_Model_ratio(Base_Model):
         return x # jump_size
 
 
-#_______________________________________combined model______________________________-
+#_______________________________________combined models______________________________-
 class User_simmulation_Model(nn.Module):
     """
     A combined model for simulating user behavior, including state evolution, intensity evaluation, interactions, and jumps.
@@ -863,7 +864,7 @@ class User_simmulation_Model(nn.Module):
         super(User_simmulation_Model, self).__init__()
         self.state_size = hyperparameter_dict["state_size"]
         self.time_size = 1# might change if we encode time
-        self.recommendation_size = hyperparameter_dict["recom_dim"]
+        self.num_recom = hyperparameter_dict["recom_dim"]
         #self.num_recom = hyperparameter_dict["num_recom"]# different reactions to outcomes
         self.num_interaction_outcomes = hyperparameter_dict["num_interaction_outcomes"]
         #init all sub-modules
@@ -874,10 +875,10 @@ class User_simmulation_Model(nn.Module):
         self.intensity_model = Intensity_Model(self.state_size, time_size=self.time_size,
                                                model_hyp=hyperparameter_dict["intensity_model"]["model_hyp"])
 
-        self.interaction_model = Interaction_Model(self.state_size, self.recommendation_size,
+        self.interaction_model = Interaction_Model(self.state_size, self.num_recom,
                                                    self.num_interaction_outcomes, hyperparameter_dict["interaction_model"]["model_hyp"])
         
-        jump_model_interaction_size = self.num_interaction_outcomes * self.num_interaction_outcomes# could change if weuse summary stats
+        jump_model_interaction_size = self.num_interaction_outcomes * self.num_recom# could change if weuse summary stats
         self.jump_model = Jump_Model_with_State_encode(self.state_size, jump_model_interaction_size, hyperparameter_dict["jump_model"]["model_hyp"])
 
     def forward(self, state, recommendations):
@@ -937,7 +938,7 @@ class User_simmulation_Model(nn.Module):
         Args:
             interactions (torch.Tensor): Interaction outcomes tensor.
         """
-        self.state = self.state + self.jump_model(self.state, interactions)
+        self.state = self.jump_model(self.state, interactions)
     
     def get_user_state(self):
         """
@@ -1002,8 +1003,6 @@ class Conditioned_User_simmulation_Model(User_simmulation_Model):
             return overall_intensity, user_intensity, local_intensity 
         return overall_intensity
 
-
-#______________________________________complete models_____________________________
 
 class all_in_one_model(nn.Module):
     """
@@ -1119,7 +1118,6 @@ class all_in_one_model(nn.Module):
         jump_value = self.jump_model(rev_ratio)
         return state + jump_value
     
-
 
 class Toy_intensity_Generator(nn.Module):
     """
@@ -1353,8 +1351,8 @@ if __name__ == "__main__":
     intensity_state_dict = {"model_hyp": {"user_model_hyp": {"layer_width": [3,3]},
             "global_model_hyp": {"layer_width": [3,3]}}
         }
-    time_tensor = torch.as_tensor([target_time])
-    start_time_tensor = torch.as_tensor([start_time])
+    time_tensor = torch.as_tensor(target_time)
+    start_time_tensor = torch.as_tensor(start_time)
     intensity_model = Intensity_Model(state_size=state_size, time_size= time_size, model_hyp= intensity_state_dict["model_hyp"])
     overall_intensity, user_intensity, out_global = intensity_model(new_state, time_tensor, state_model=state_model,
                                 start_time=start_time_tensor)
@@ -1364,7 +1362,8 @@ if __name__ == "__main__":
     interaction_state_dict = {"model_hyp": {"layer_width": [3,3]}
                     }
 
-    recommendations = torch.randn((1,num_recomm, recom_dim))
+    #recommendations = torch.randn((1,num_recomm, recom_dim))
+    recommendations = torch.randn((1,num_recomm))
     #recommendations = recommendations.unsqueeze(0)
     interaction_Model = Interaction_Model(state_size=state_size, recommendation_size=recom_dim,
                                         num_outcomes=num_interaction_outcomes, interaction_model_hyp=interaction_state_dict["model_hyp"])
@@ -1380,7 +1379,7 @@ if __name__ == "__main__":
     jump_state_dict = {"model_hyp": {"layer_width": [3,3]}
                         }
 
-    jump_model = Jump_Model_with_State_encode(state_size, num_interaction_outcomes*num_recomm, jump_state_dict["model_hyp"])
+    jump_model = Jump_Model_with_State_encode(state_size, num_interaction_outcomes, jump_state_dict["model_hyp"])
     jump = jump_model(new_state, interactions)
     print("jump: ", jump, "\t shape: ", jump.shape)
     new_state = new_state + jump
@@ -1397,3 +1396,4 @@ if __name__ == "__main__":
     interactions = combined_model.view_recommendations(recommendations)
     print("Interactions: ", interactions, "\t shape: ", interactions.shape)
     combined_model.jump(interactions) 
+
