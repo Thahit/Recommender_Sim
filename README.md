@@ -1,5 +1,22 @@
-## Accordion: a Trainable Simulator for Long-Term Interactive Systems
+# Exploring the Modelling of User Arrival Times of Online Streaming Sites
+We aim to generate synthetic user data that mimics real-world interactions to experiment with recommender systems.\\
+   Given the last interaction time t<sub>i</sub>and interactions r<sub>i</sub> generate predictions for the next time the user visits the site/app.  t <sub>i+1~ f<sub>θ</sub>(|t<sub>i</sub>, r<sub>i</sub>)$. Our idea is that users have a hidden state that evolves over time and dictates when users interact with the system.
 
+## Data processing
+After following the instructions below (Accordion: a Trainable Simulator for Long-Term Interactive Systems), use the notebook notebooks/preprocess_for_new.ipynb to continue processing the data.  
+
+## Models
+For a nicer explanation of the models, I refer to the poster.
+
+### Model as Partially Deterministic Markov Process (PDMP)
+
+### Alternative Model 1: Function Approximation
+
+### Alternative Model 2: Density Estimation
+
+## Accordion: a Trainable Simulator for Long-Term Interactive Systems
+The starting point of this repo is the https://github.com/jamesmcinerney/accordion repository.
+The following text is the content of its README file.
 
 ***This is prototype code for research purposes only.***
 
@@ -48,9 +65,9 @@ Requires the following packages:
 Cite as:
 
 `@inproceedings{mcinerney2021accordion,
-  title={Accordion: A Trainable Simulator for Long-Term Interactive Systems},
-  author={McInerney, James and Elahi, Ehtsham and Basilico, Justin and Raimond, Yves and Jebara, Tony},
-  booktitle={Fifteenth ACM Conference on Recommender Systems},
-  pages={102--113},
-  year={2021}
+ title={Accordion: A Trainable Simulator for Long-Term Interactive Systems},
+ author={McInerney, James and Elahi, Ehtsham and Basilico, Justin and Raimond, Yves and Jebara, Tony},
+ booktitle={Fifteenth ACM Conference on Recommender Systems},
+ pages={102--113},
+ year={2021}
 }`
