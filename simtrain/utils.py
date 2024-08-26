@@ -17,6 +17,7 @@ os.environ['NUMEXPR_MAX_THREADS'] = '16'
 
 #loss_func = nn.functional.mse_loss
 EPSILON = 1e-15
+
 def visualize_samples(ind,train_model, path_list, state_size, timecheat=False, 
                       use_jump=False):
     sample_path = path_list[ind]

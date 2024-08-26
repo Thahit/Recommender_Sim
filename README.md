@@ -1,6 +1,7 @@
 # Exploring the Modelling of User Arrival Times of Online Streaming Sites
-We aim to generate synthetic user data that mimics real-world interactions to experiment with recommender systems.\\
-   Given the last interaction time t<sub>i</sub>and interactions r<sub>i</sub> generate predictions for the next time the user visits the site/app.  t <sub>i+1</sub>~ f<sub>θ</sub>(|t<sub>i</sub>, r<sub>i</sub>)$. Our idea is that users have a hidden state that evolves over time and dictates when users interact with the system.
+We aim to generate synthetic user data that mimics real-world interactions to experiment with recommender systems. <break>
+Given the last interaction time t<sub>i</sub> and interactions r<sub>i</sub> generate predictions for the next time the user visits the site/app.  t <sub>i+1</sub>~ f<sub>θ</sub>(|t<sub>i</sub>, r<sub>i</sub>). Our idea is that users have a hidden state that evolves over time and dictates when users interact with the system.
+
 
 ## Data processing
 After following the instructions below (Accordion: a Trainable Simulator for Long-Term Interactive Systems), use the notebook notebooks/preprocess_for_new.ipynb to continue processing the data.  
