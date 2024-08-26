@@ -6,7 +6,7 @@ We aim to generate synthetic user data that mimics real-world interactions to ex
 After following the instructions below (Accordion: a Trainable Simulator for Long-Term Interactive Systems), use the notebook notebooks/preprocess_for_new.ipynb to continue processing the data.  
 
 ## Models
-For a nicer explanation of the models, I refer to the poster.
+For a nicer explanation of the models, I refer to the [poster](assets/Poster.pdf).
 
 ### Model as Partially Deterministic Markov Process (PDMP)
 The PDMP approach models user behavior by combining deterministic and stochastic elements. The hidden state of the user evolves continuously over time through a flow function, modeled as an ODE. The intensity function determines when the next interaction will occur by calculating the waiting time distribution. After each interaction, the user's state undergoes a jump, influenced by the interaction's outcome. While this model captures complex dynamics, it faces challenges such as numerical instability, high computational costs, and difficulties in differentiability.
