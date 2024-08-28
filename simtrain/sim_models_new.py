@@ -1235,18 +1235,29 @@ class Toy_intensity_Comparer(nn.Module):
         self.time_size= hyperparameter_dict.get("time_embedding_size",0)
         self.max_freq= hyperparameter_dict.get("max_freq",70)
         self.encode_time = self.time_size > 0
+        self.timecheat = hyperparameter_dict.get("timecheat", False)
 
         self.state_model_type = hyperparameter_dict["state_model_type"]
         if self.state_model_type == "simple":
             if self.encode_time:
                 self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
-                self.user_state_model = Base_Model(self.state_size+self.time_size+1, self.state_size,
+                if self.timecheat:
+                    self.user_state_model = Base_Model(self.state_size + self.time_size*2 + 1, self.state_size,
+                            hyperparameter_dict["state_model"]["model_hyp"],
+                        )
+                else:
+                    self.user_state_model = Base_Model(self.state_size+self.time_size+1, self.state_size,
                         hyperparameter_dict["state_model"]["model_hyp"],
                     )
             else:
-                self.user_state_model = Base_Model(self.state_size+1, self.state_size,
+                if self.timecheat:
+                    self.user_state_model = Base_Model(self.state_size+2, self.state_size,
                         hyperparameter_dict["state_model"]["model_hyp"],
                     )
+                else:
+                    self.user_state_model = Base_Model(self.state_size+1, self.state_size,
+                            hyperparameter_dict["state_model"]["model_hyp"],
+                        )
         elif self.state_model_type == "ode":
             self.user_state_model = User_State_Model(self.state_size, 
                 hyperparameter_dict["state_model"]["model_hyp"],)
@@ -1261,7 +1272,7 @@ class Toy_intensity_Comparer(nn.Module):
             self.jump_model = Jump_Model_ratio(self.state_size, 
                 hyperparameter_dict["jump_model"]["model_hyp"])
 
-    def evolve_state(self, state, delta):
+    def evolve_state(self, state, delta, global_time=None):
         """
         Evolves the user's state over a time interval `delta`.
 
@@ -1275,10 +1286,15 @@ class Toy_intensity_Comparer(nn.Module):
         if self.state_model_type != "simple":
             return self.user_state_model(state, delta) 
         if self.encode_time:
-            time_emb=self.embed(delta)
+            time_emb = self.embed(delta)
             input = torch.cat((state, time_emb, delta), dim=1)
+            if self.timecheat:
+                global_time_emb = self.embed(global_time)
+                input = torch.cat((input, global_time_emb), dim=1)
         else:
             input = torch.cat((state, delta), dim=1)
+            if self.timecheat:
+                input = torch.cat((input, global_time), dim=1)
         return self.user_state_model(input)
     
     def get_intensity(self, state):# might want to make this time dependent
@@ -1293,7 +1309,7 @@ class Toy_intensity_Comparer(nn.Module):
         """
         return self.intensity_model(state) 
     
-    def forward(self, state, times, return_new_state=False):
+    def forward(self, state, delta, global_time, return_new_state=False):
         """
         Computes the intensity after evolving the state over given time intervals.
 
@@ -1306,7 +1322,7 @@ class Toy_intensity_Comparer(nn.Module):
             torch.Tensor: The calculated intensity.
             torch.Tensor (optional): The new state, if `return_new_state` is True.
         """
-        new_state = self.evolve_state(state, times)
+        new_state = self.evolve_state(state, delta, global_time)
         
         freq =  self.get_intensity(new_state)
         if return_new_state: 
