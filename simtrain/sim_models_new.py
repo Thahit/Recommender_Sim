@@ -1344,6 +1344,140 @@ class Toy_intensity_Comparer(nn.Module):
         return state + jump_value
 
 
+class Conditioned_Toy_intensity_Comparer(nn.Module):
+    """
+    A neural network model designed to compare event intensities over time by evolving the user's state
+    and calculating the resulting intensities. It supports different state evolution models(ODE or simple) and optional
+    time encoding.
+
+    Args:
+        hyperparameter_dict (Dict): A dictionary containing the model hyperparameters for the state,
+                                    intensity, and (optionally) jump models.
+    """
+    def __init__(self, hyperparameter_dict: Dict):
+        super(Conditioned_Toy_intensity_Comparer, self).__init__()
+
+        self.state_size = hyperparameter_dict["state_size"]
+        self.time_size= hyperparameter_dict.get("time_embedding_size",0)
+        self.max_freq= hyperparameter_dict.get("max_freq",70)
+        self.encode_time = self.time_size > 0
+        self.timecheat = hyperparameter_dict.get("timecheat", False)
+
+        self.state_model_type = hyperparameter_dict["state_model_type"]
+        if self.state_model_type == "simple":
+            if self.encode_time:
+                self.embed = SignWaveEmbedding(self.time_size, max_freq=self.max_freq)
+                if self.timecheat:
+                    self.user_state_model = Base_Model(self.state_size*2 + self.time_size*2 + 1, self.state_size,
+                            hyperparameter_dict["state_model"]["model_hyp"],
+                        )
+                else:
+                    self.user_state_model = Base_Model(self.state_size*2+self.time_size+1, self.state_size,
+                        hyperparameter_dict["state_model"]["model_hyp"],
+                    )
+            else:
+                if self.timecheat:
+                    self.user_state_model = Base_Model(self.state_size*2+2, self.state_size,
+                        hyperparameter_dict["state_model"]["model_hyp"],
+                    )
+                else:
+                    self.user_state_model = Base_Model(self.state_size*2+1, self.state_size,
+                            hyperparameter_dict["state_model"]["model_hyp"],
+                        )
+        elif self.state_model_type == "ode":
+            self.user_state_model = Conditioned_User_State_Model(self.state_size, 
+                hyperparameter_dict["state_model"]["model_hyp"],)
+        else:
+            raise ValueError
+        
+        
+        self.intensity_model = User_State_Intensity_Model_simple(self.state_size*2, 
+            hyperparameter_dict["intensity_model"]["model_hyp"])
+        
+        if "jump_model" in hyperparameter_dict.keys():
+            self.jump_model = Jump_Model_ratio(self.state_size, 
+                hyperparameter_dict["jump_model"]["model_hyp"])
+    
+    def init_user(self, params):
+        self.user_params = params
+
+    def evolve_state(self, state, delta, global_time=None):
+        """
+        Evolves the user's state over a time interval `delta`.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+            delta (torch.Tensor): The time interval over which to evolve the state.
+        
+        Returns:
+            torch.Tensor: The evolved state tensor.
+        """
+        state_concatinated = torch.cat((state, self.user_params), dim=1)
+        
+        
+        if self.state_model_type != "simple":
+            return self.user_state_model(state_concatinated, delta) 
+        if self.encode_time:
+            time_emb = self.embed(delta)
+            input = torch.cat((state_concatinated, time_emb, delta), dim=1)
+            if self.timecheat:
+                global_time_emb = self.embed(global_time)
+                input = torch.cat((input, global_time_emb), dim=1)
+        else:
+            input = torch.cat((state_concatinated, delta), dim=1)
+            if self.timecheat:
+                input = torch.cat((input, global_time), dim=1)
+        return self.user_state_model(input)
+    
+    def get_intensity(self, state):# might want to make this time dependent
+        """
+        Calculates the event intensity based on the current state.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+        
+        Returns:
+            torch.Tensor: The calculated intensity.
+        """
+        state_concatinated = torch.cat((state, self.user_params), dim=1)
+        return self.intensity_model(state_concatinated) 
+    
+    def forward(self, state, delta, global_time=None, return_new_state=False):
+        """
+        Computes the intensity after evolving the state over given time intervals.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+            times (torch.Tensor): The time intervals over which to evolve the state.
+            return_new_state (bool, optional): Whether to return the new state along with the intensity. Defaults to False.
+        
+        Returns:
+            torch.Tensor: The calculated intensity.
+            torch.Tensor (optional): The new state, if `return_new_state` is True.
+        """
+        new_state = self.evolve_state(state, delta, global_time)
+        
+        freq =  self.get_intensity(new_state)
+        if return_new_state: 
+            return freq, new_state
+        return freq
+    
+    def jump(self, state, rev_ratio):# not working well 
+        """
+        Adjusts the state based on a jump model, useful for modeling sudden transitions.
+
+        Args:
+            state (torch.Tensor): The current state tensor.
+            rev_ratio (torch.Tensor): A ratio representing the reverse jump effect.
+        
+        Returns:
+            torch.Tensor: The adjusted state after applying the jump.
+        """
+        jump_value = self.jump_model(rev_ratio)
+        return state + jump_value
+
+
+
 if __name__ == "__main__":
     # test code
 

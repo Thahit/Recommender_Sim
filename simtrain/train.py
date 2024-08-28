@@ -489,19 +489,22 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
             lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
             num_epochs=100, loss_print_interval=1, print_grad=False,
             train_bayesian_weight=0,logging_shift=0,
-            user_lr_decay=1, state_consistancy_training=False, consistancy_weight=1):
+            user_lr_decay=1, state_consistancy_training=False, consistancy_weight=1,
+            conditioned=False):
     results = []
     mse_loss_func = nn.MSELoss()
-    for iter in tqdm(range(num_epochs)):
+    kl_loss_func_model = bnn.BKLLoss(reduction='mean', last_layer_only=False)
+    for iter in tqdm(range(-logging_shift, num_epochs-logging_shift)):
         loss_sum_all = 0.0
         loss_sum_freq = 0.0
         loss_sum_kl = .0
         loss_state_consistancy = .0
         #num_updates = 0
-        kl_loss_func_model = bnn.BKLLoss(reduction='mean', last_layer_only=False)
+        random.shuffle(dataloader_list)
+        
 
-        for i in range(-logging_shift,len(dataloader_list)-logging_shift):# not the nicest way to do things
-            random.shuffle(dataloader_list)
+        for i in range(len(dataloader_list)):# not the nicest way to do things
+            
             dataloader, variational_means, variational_logvar, extras = dataloader_list[i]
             for batch in dataloader:
                 timesteps = batch['timestep'].unsqueeze(1)  # Add batch dimension
@@ -510,7 +513,12 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
                 variational_means, variational_logvar = torch.tensor(variational_means, 
                     requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
                 variances = torch.exp(variational_logvar)
-                state = variational_means + variances*torch.randn((size_curr, state_size))
+                state = variational_means + variances*torch.randn((1, state_size))
+                #print(state)
+                state = state.repeat((size_curr,1))
+                if conditioned:
+                    model.init_user(state)
+                #print(state)
                 #curr_loss_state_consistancy = torch.tensor(0)
                 curr_loss_state_consistancy = 0
                 optimizer.zero_grad()
@@ -579,7 +587,7 @@ def train_density_multiple_variational_sorted(model, dataloader_list, criterion,
             lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
             num_epochs=100, loss_print_interval=1, print_grad=False,
             train_bayesian_weight=0,logging_shift=0, use_jump=False,
-            user_lr_decay=1, ):
+            user_lr_decay=1, conditioned=False):
     results = []
     mse_loss_func = nn.MSELoss()
     for iter in tqdm(range(-logging_shift,num_epochs-logging_shift)):
@@ -597,7 +605,8 @@ def train_density_multiple_variational_sorted(model, dataloader_list, criterion,
                     requires_grad=True).to(device), torch.tensor(variational_logvar, requires_grad=True).to(device)
             variances = torch.exp(variational_logvar)
             state = variational_means + variances*torch.randn((1, state_size))
-            
+            if conditioned:
+                model.init_user(state)
             curr_loss_state_consistancy = 0
             loss_freq=0
             optimizer.zero_grad()
