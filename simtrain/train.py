@@ -574,8 +574,8 @@ def train_density_multiple_variational(model, dataloader_list, criterion, optimi
     return results
 
 
-def train_density_multiple_variational_sorted(model, dataloader_list, criterion, optimizer, warmup_scheduler, 
-            state_size, device, model_type,
+def train_density_multiple_variational_sorted(model, dataloader_list, criterion, 
+            optimizer, warmup_scheduler, state_size, device, model_type,
             lr_scheduler, warmup_period,loss_func_kl, kl_weight=1, user_lr=1,
             num_epochs=100, loss_print_interval=1, print_grad=False,
             train_bayesian_weight=0,logging_shift=0, use_jump=False,
@@ -610,13 +610,12 @@ def train_density_multiple_variational_sorted(model, dataloader_list, criterion,
                     timesteps = timesteps.unsqueeze(1)
                 delta = timesteps- last_t
                 last_t = timesteps
+                #print(timesteps)
                 frequencies = batch['frequency'].unsqueeze(1)
                 reaction = batch['reaction'].unsqueeze(1)
                 #curr_loss_state_consistancy = torch.tensor(0)
-                
-                
 
-                outputs, state = model(state, delta, return_new_state=True)
+                outputs, state = model(state, delta, global_time=timesteps, return_new_state=True)
                 
                 loss_freq = loss_freq+criterion(outputs, frequencies)  # Remove extra dimension from output
 
@@ -655,7 +654,7 @@ def train_density_multiple_variational_sorted(model, dataloader_list, criterion,
                     lr_scheduler.step()
         
         if iter % loss_print_interval == 0:
-            print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_sum_all:.3f}, loss_sum_freq: {loss_sum_freq:.3f}, loss_sum_kl: {loss_sum_kl:.3f}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
+            print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_sum_all:.3f}, loss_sum_freq: {loss_sum_freq:.3f}, loss_sum_kl: {loss_sum_kl:.3f}, lr: {lr_scheduler.get_last_lr()[0]:.7f}, userlr: {user_lr:.7f}")
             results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl, loss_state_consistancy))
             if print_grad:
                 for name, param in model.named_parameters():
@@ -664,7 +663,7 @@ def train_density_multiple_variational_sorted(model, dataloader_list, criterion,
             #print(f"num_updates: {num_updates}")
         user_lr *= user_lr_decay # lower variational lr,  fine for it to reach 0
         
-    print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_sum_all:.3f}, loss_sum_freq: {loss_sum_freq:.3f}, loss_sum_kl: {loss_sum_kl:.3f}, lr: {lr_scheduler.get_lr()[0]:.7f}, userlr: {user_lr:.7f}")
+    print(f"epoch: {iter+1+logging_shift} loss_sum_all: {loss_sum_all:.3f}, loss_sum_freq: {loss_sum_freq:.3f}, loss_sum_kl: {loss_sum_kl:.3f}, lr: {lr_scheduler.get_last_lr()[0]:.7f}, userlr: {user_lr:.7f}")
     results.append((iter, loss_sum_all, loss_sum_freq, loss_sum_kl, loss_state_consistancy))
             
     return results

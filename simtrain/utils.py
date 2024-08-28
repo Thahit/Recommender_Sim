@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 os.environ['NUMEXPR_MAX_THREADS'] = '16'
 
 #loss_func = nn.functional.mse_loss
-EPSILON = 1e-15
+EPSILON = 1e-25
 
 def visualize_samples(ind,train_model, path_list, state_size, timecheat=False, 
                       use_jump=False):
@@ -177,7 +177,7 @@ def kl_divergence(mu1, sigma1, mu2, sigma2):
     Returns:
         Tensor: KL divergence.
     """
-    kl_div = torch.log(sigma2 / sigma1) + ((sigma1 ** 2 + (mu1 - mu2) ** 2) / (2 * sigma2 ** 2)) - 0.5
+    kl_div = torch.log(sigma2 / sigma1 +EPSILON) + ((sigma1 ** 2 + (mu1 - mu2) ** 2) / (2 * sigma2 ** 2)) - 0.5
     return kl_div
 
 
@@ -193,7 +193,7 @@ def kl_divergence_to_standard_normal(mu, sigma):
         Tensor: KL divergence.
     """
     sigma2 = sigma ** 2
-    kl_div = 0.5 * (sigma2 + mu ** 2 - torch.log(sigma2) - 1)
+    kl_div = 0.5 * (sigma2 + mu ** 2 - torch.log(sigma2 + EPSILON) - 1)
     return kl_div
 
 
@@ -225,11 +225,22 @@ def print_user_params(dataloader, print_var = False, num_examples=5):
 
 
 def generate_density_plot(selected_user, model, model_type, dataloader_list, 
-                    use_variational_nn=False, train_sorted=False):
+                    use_variational_nn=False, train_sorted=False, use_jump=False, use_next_jump_point=True):
     dataloader, variational_means, variational_logvar, extras = dataloader_list[selected_user]
     print(extras["user_id"])
     dataset = dataloader.dataset
-    x_range = np.linspace(0, 71, 71*2)  # Adjust the range as needed
+    x_range = np.linspace(0, 70, 70*2)  # Adjust the range as needed
+
+    if use_jump:
+        interaction_examples= []
+        times = []
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            if sample['reaction']>=0:
+                interaction_examples.append(sample['reaction'])
+                times.append(sample['timestep'])
+
+
     x_range_tensor = torch.tensor(x_range, dtype=torch.float32).unsqueeze(1)
     model.eval()
     with torch.no_grad():
@@ -243,32 +254,60 @@ def generate_density_plot(selected_user, model, model_type, dataloader_list,
                 predictions.append(out[0])
         else:
             if use_variational_nn:
-                predictions_list = []
-                for _ in range(20):
-                    state = torch.tensor(variational_means).repeat(len(x_range),1)
-                    predictions, states = model(state, x_range_tensor, return_new_state=True)
-                    predictions = predictions.numpy()
-                    predictions_list.append(predictions)
-                    #print("variance of states: ", torch.var(states))
-                predictions_list = np.stack(predictions_list)
-                predictions = np.mean(predictions_list, axis=0)
-                var = np.var(predictions_list, axis=0)
-                cond = (0.1>var) | (var <.01)
-                #predictions = np.where(cond , predictions, 0)
+                if train_sorted:
+                    raise NotImplementedError
+                else:
+                    predictions_list = []
+                    for _ in range(20):
+                        state = torch.tensor(variational_means).repeat(len(x_range),1)
+                        predictions, states = model(state, x_range_tensor, return_new_state=True)
+                        predictions = predictions.numpy()
+                        predictions_list.append(predictions)
+                        #print("variance of states: ", torch.var(states))
+                    predictions_list = np.stack(predictions_list)
+                    predictions = np.mean(predictions_list, axis=0)
+                    var = np.var(predictions_list, axis=0)
+                    cond = (0.1>var) | (var <.01)
+                    #predictions = np.where(cond , predictions, 0)
 
             else:
                 if train_sorted:
                     state  = torch.tensor([variational_means])
+                    last_t = -1e-20
+                    predictions = []
+                    interaction_id = 0
                     for i in range(len(x_range)):
                         curr_t = x_range_tensor[i].view(1,-1)
-                        predictions, states = model(state, curr_t, return_new_state=True)
+                        delta = curr_t - last_t
+                        last_t = curr_t
+                        prediction, state = model(state, delta, curr_t, return_new_state=True)
+                        prediction = prediction.squeeze().numpy()
+                        predictions.append(prediction)
+                        if use_jump:
+                            if use_next_jump_point:
+                                if prediction >1.9:
+                                    #print("prediction: ", prediction)
+                                    if interaction_id < len(interaction_examples)-1:
+                                        reaction =interaction_examples[interaction_id].view(1,1)
+                                        interaction_id+=1
+                                    else:
+                                        reaction = torch.zeros((1,1))
+                                    #print("jump at: ", curr_t)
+                                    state = model.jump(state, reaction)
+                            else:
+                                while (interaction_id < len(interaction_examples)-1) and \
+                                    (times[interaction_id]<=curr_t):
+                                    reaction = interaction_examples[interaction_id].view(1,1)
+                                    interaction_id += 1
+                                    state = model.jump(state, reaction)
+                                    #print("jump at: ", curr_t)
                 else:
                     state = torch.tensor(variational_means).repeat(len(x_range),1)
-                    predictions, states = model(state, x_range_tensor, return_new_state=True)
+                    predictions, state = model(state, x_range_tensor, return_new_state=True)
                     predictions = predictions.numpy()
                     #print("variance of states: ", torch.var(states))
 
-    print(f"area: {np.sum(predictions)*(72/200)}")
+    print(f"area: {np.sum(predictions)*(71/len(x_range))}")
     # Plot the results
     plt.figure(figsize=(10, 6))
     plt.plot(x_range, predictions, label='Model Predictions')
@@ -291,6 +330,7 @@ def generate_density_plot(selected_user, model, model_type, dataloader_list,
     plt.legend()
     plt.grid(True)
     plt.show()
+
 
 
 def logging_func(loss_all, loss_base, loss_kl, loss_intensity):
